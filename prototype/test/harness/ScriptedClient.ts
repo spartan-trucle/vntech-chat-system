@@ -16,7 +16,8 @@ import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { FixtureDevice } from '../../src/fixtures.js';
-import { decodeFrame, encodeFrame, type AppState, type ClientFrame, type HelloAckFrame, type MsgFrame, type ServerFrame, type StreamId } from '../../src/protocol.js';
+import { decodeFrame, encodeFrame, type AppState, type ClientFrame, type DeliverFrame, type HelloAckFrame, type Message, type MsgFrame, type ServerFrame, type StreamId } from '../../src/protocol.js';
+import type { MessageId } from '../../src/ids.js';
 import type { TimerHandle, Timers } from '../../src/server.js';
 import { Trace } from '../../src/trace.js';
 
@@ -63,6 +64,10 @@ export interface ScriptedClientOptions {
   mirrorRule?: boolean | MirrorRuleOptions;
   /** Default on with the §1.4 table; `false` to never reconnect. */
   reconnect?: boolean | BackoffOptions;
+  /** B3: ack `deliver` frames once per batch (default on); `ackBatchSize` 100, `ackGapMs` 20 on the client's timers. */
+  autoAck?: boolean;
+  ackBatchSize?: number;
+  ackGapMs?: number;
 }
 
 const realTimers: Timers = {
@@ -135,6 +140,7 @@ export class ScriptedClient {
     this.backoff = reconnect === false
       ? null
       : { ...DEFAULT_BACKOFF, random: Math.random, ...(reconnect === true ? {} : reconnect) };
+    this.initReplayBookkeeping(opts);
   }
 
   get socket(): WebSocket | null {
@@ -173,6 +179,7 @@ export class ScriptedClient {
         const i = this.outbox.findIndex((m) => m.client_msg_id === frame.client_msg_id);
         if (i >= 0) this.outbox.splice(i, 1);
       }
+      if (frame.t === 'deliver') this.onDeliver(frame);
       const i = this.waiters.findIndex((w) => w.pred(frame));
       if (i >= 0) {
         const [w] = this.waiters.splice(i, 1);
@@ -259,6 +266,67 @@ export class ScriptedClient {
     this.send({ t: 'ack', up_to_stream_id });
   }
 
+  // ---- B3 replay bookkeeping (design §4.4, §4.7): dedup by message id, one ack per batch ----
+  // Only the ack moves the cursor and the server never marks where a batch ends, so the client
+  // acks on a count (`ackBatchSize` frames) or on silence (`ackGapMs` with no further frame),
+  // whichever comes first, always with the last stream id it saw. Live frames follow the same rule.
+
+  /** Every message id this device has rendered; a replayed duplicate is dropped here (design §4.4). */
+  readonly seen = new Set<MessageId>();
+  /** Unique messages in arrival order: what the app would show. */
+  readonly delivered: Message[] = [];
+  /** `deliver` frames dropped by the dedup (an over-replay, a cursor sent backwards). */
+  duplicatesDropped = 0;
+  private autoAck = true;
+  private ackBatchSize = 100;
+  private ackGapMs = 20;
+  private pendingAcks = 0;
+  private lastStreamId: StreamId | null = null;
+  private ackGap: TimerHandle | null = null;
+
+  private initReplayBookkeeping(opts: ScriptedClientOptions): void {
+    this.autoAck = opts.autoAck ?? true;
+    this.ackBatchSize = opts.ackBatchSize ?? 100;
+    this.ackGapMs = opts.ackGapMs ?? 20;
+  }
+
+  private onDeliver(frame: DeliverFrame): void {
+    const { message, stream_id } = frame;
+    if (this.seen.has(message.message_id)) {
+      this.duplicatesDropped += 1;
+      this.trace.add('dedup', `${this.name} already has sid ${stream_id} (#${message.message_id}), dropped`);
+    } else {
+      this.seen.add(message.message_id);
+      this.delivered.push(message);
+    }
+    if (!this.autoAck) return;
+    // The server waits for the ack of the batch's last id, duplicates included, so every frame counts.
+    this.lastStreamId = stream_id;
+    this.pendingAcks += 1;
+    if (this.pendingAcks >= this.ackBatchSize) {
+      this.flushAck();
+      return;
+    }
+    this.clearAckGap();
+    this.ackGap = this.timers.setTimeout(() => {
+      this.ackGap = null;
+      this.flushAck();
+    }, this.ackGapMs);
+  }
+
+  private flushAck(): void {
+    this.clearAckGap();
+    this.pendingAcks = 0;
+    if (this.lastStreamId !== null && this.connected && !this.radioOff) this.ack(this.lastStreamId);
+  }
+
+  private clearAckGap(): void {
+    if (this.ackGap === null) return;
+    this.timers.clearTimeout(this.ackGap);
+    this.ackGap = null;
+  }
+  // ---- end of the B3 block ----
+
   /** Resolves with the first frame that matches (already received frames count), or rejects after `timeoutMs`. */
   expect(what: ServerFrame['t'] | FramePredicate, timeoutMs = 2000): Promise<ServerFrame> {
     const pred: FramePredicate = typeof what === 'string' ? (f) => f.t === what : what;
@@ -323,6 +391,7 @@ export class ScriptedClient {
   stop(): void {
     this.destroyWithoutClose();
     for (const w of this.waiters.splice(0)) clearTimeout(w.timer);
+    this.clearAckGap();
   }
 
   async replay(script: ScriptStep[]): Promise<void> {

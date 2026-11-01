@@ -72,6 +72,11 @@ export function registerSync(ctx: ServerContext): () => void {
     void lastTrimmedId;
   });
 
+  // ---- acks: the device advanced its cursor; the server keeps nothing (design §4.7) ----
+  ctx.onFrame('ack', (conn, frame) => {
+    ctx.trace.add('queue', `${conn.name} ack sid=${frame.up_to_stream_id} (device-owned cursor; server stores nothing)`);
+  });
+
   return () => {
     offAcked();
     offHello();

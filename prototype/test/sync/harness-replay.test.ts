@@ -32,6 +32,7 @@ describe('ScriptedClient replay bookkeeping (B3): dedup by message id, auto-ack 
     srv.ctx.send(conn, { t: 'deliver', message: message(message_id), stream_id: streamIdOf(message_id) });
   };
   const acksSent = (): string[] => server!.ctx.trace.rows().filter((r) => r.tag === 'ack' && r.text.startsWith('Truc·phone →')).map((r) => r.text);
+  const delivers = (c: ScriptedClient): number => c.received.filter((f) => f.t === 'deliver').length;
 
   afterEach(async () => {
     for (const c of clients.splice(0)) c.stop();
@@ -45,7 +46,7 @@ describe('ScriptedClient replay bookkeeping (B3): dedup by message id, auto-ack 
     deliver(srv, '101');
     deliver(srv, '102');
     deliver(srv, '101');
-    await until(() => c.received.length === 4, 1000, 'four frames'); // hello_ack + 3 delivers
+    await until(() => delivers(c) === 3, 1000, 'three delivers');
     expect(c.delivered.map((m) => m.message_id)).toEqual(['101', '102']);
     expect([...c.seen]).toEqual(['101', '102']);
     expect(c.duplicatesDropped).toBe(1);
@@ -62,7 +63,7 @@ describe('ScriptedClient replay bookkeeping (B3): dedup by message id, auto-ack 
     srv.ctx.onFrame('ack', (_conn, frame) => { seen.push(frame); });
     deliver(srv, '101');
     deliver(srv, '102');
-    await until(() => c.received.length === 3, 1000, 'two delivers');
+    await until(() => delivers(c) === 2, 1000, 'two delivers');
     expect(c.cursor).toBeNull();
     expect(acksSent()).toEqual([]);
     await time.advance(19);
@@ -82,7 +83,7 @@ describe('ScriptedClient replay bookkeeping (B3): dedup by message id, auto-ack 
     deliver(srv, '102');
     deliver(srv, '102');
     deliver(srv, '103');
-    await until(() => c.received.length === 5, 1000, 'four delivers');
+    await until(() => delivers(c) === 4, 1000, 'four delivers');
     expect(acksSent()).toEqual(['Truc·phone → up_to=102-0']);
     expect(c.cursor).toBe('102-0');
     expect(c.delivered.map((m) => m.message_id)).toEqual(['101', '102', '103']);
@@ -98,7 +99,7 @@ describe('ScriptedClient replay bookkeeping (B3): dedup by message id, auto-ack 
     const time = new FakeTime();
     const c = await connect({ timers: time, autoAck: false });
     deliver(srv, '101');
-    await until(() => c.received.length === 2, 1000, 'one deliver');
+    await until(() => delivers(c) === 1, 1000, 'one deliver');
     await time.advance(100);
     expect(acksSent()).toEqual([]);
     expect(time.pending()).toBe(0);
@@ -112,7 +113,7 @@ describe('ScriptedClient replay bookkeeping (B3): dedup by message id, auto-ack 
     const time = new FakeTime();
     const c = await connect({ timers: time });
     deliver(srv, '101');
-    await until(() => c.received.length === 2, 1000, 'one deliver');
+    await until(() => delivers(c) === 1, 1000, 'one deliver');
     expect(time.pending()).toBe(1);
     c.stop();
     expect(time.pending()).toBe(0);
