@@ -4,8 +4,8 @@ Decisions made while working through [`specification.md`](specification.md). Eac
 states the decision, the numbers it was made against, and the alternative it rejected.
 The discussion page [`index.html`](index.html) tracks which layers are still open.
 
-High-level architecture: [`diagrams/high-level.html`](diagrams/high-level.html) (interactive, built
-from [`diagrams/high-level.architecture.json`](diagrams/high-level.architecture.json)).
+High-level architecture: [`diagrams/high-level.html`](diagrams/high-level.html) (hand-drawn SVG; buttons
+highlight the send, offline, and history/media flows).
 
 Frame (decided 2026-11-01): **the canonical architecture** from Alex Xu, *System Design
 Interview* ch. 12 — stateless API servers, stateful chat servers over WebSocket, a presence
