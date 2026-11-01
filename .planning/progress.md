@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 6 (B7 frame fix landed d7ea3ea; B4 B5 B6 in flight; wave 2 goes to C as one range; A3 waiting on the author)
+Last updated: 2026-11-01, report round 7 (B5 merged on lane 53b17e9; B4 B6 in flight; wave 2 goes to C as one range; A3 waiting on the author)
 
 ## Epics
 
@@ -18,7 +18,7 @@ Last updated: 2026-11-01, report round 6 (B7 frame fix landed d7ea3ea; B4 B5 B6 
 | B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
 | B2 send path, store, dedup | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 4c293da | 111 passed (lane), 93 alone | push pending has tick granularity, the per-destination bound must leave room for one tick's fan-out; loopback only backs up after ~0.5 MB so the backpressure test corks the socket | none |
 | B4 history + summary (slow path) | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
-| B5 receipts + unread | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
+| B5 receipts + unread | B | 2 | done on lane (53b17e9 + fixture fix be877df), C review with the rest of wave 2 | claude/b-prototype-297ab9 @ be877df | 166 passed (lane), typecheck clean | B5's status test fixture predated the sha256 column added by the B7 fix; one-line fixture fix after merge | none |
 | B6 presence | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B7 media stub | B | 2 | done on lane (f650565 + fix d7ea3ea), C review with the rest of wave 2 | claude/b-prototype-297ab9 @ d7ea3ea | 133 passed (lane) | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
 | B3 sync queue replay | B | 3 | todo | feature/B-prototype | | | |
