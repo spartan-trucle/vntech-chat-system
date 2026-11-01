@@ -188,4 +188,43 @@ describe('B4 history page API, summary row and slow path (design §2.3, §4.3, �
       expect(await get(`/conversations/c1/messages/${id}?user_id=truc&before=201`)).toEqual({ status: 400, body: { error: 'bad_limit' } });
     });
   });
+
+  describe('conv:{id}:summary (design §4.3): updated on every store write', () => {
+    test('a stored msg writes the summary row: last id, preview, sender, created_at; the next one replaces it', async () => {
+      const srv = await start();
+      const khanh = await connect(DEVICES.khanhPhone);
+      expect(await srv.ctx.ports.summaries.get('c1')).toBeUndefined();
+
+      const first = await sendMsg(khanh, 'c1', 'first one');
+      const row = await srv.ctx.ports.messages.get('c1', first);
+      expect(await srv.ctx.ports.summaries.get('c1')).toEqual({
+        conversation_id: 'c1', last_message_id: first, last_preview: 'first one', last_sender: 'khanh', last_at: row!.created_at,
+      });
+
+      const second = await sendMsg(khanh, 'c1', 'second one');
+      expect(await srv.ctx.ports.summaries.get('c1')).toMatchObject({ last_message_id: second, last_preview: 'second one' });
+      expect(await srv.ctx.ports.summaries.get('c2')).toBeUndefined();
+    });
+
+    test('the preview is the body cut to 80 characters, or [media] for a media-only message', async () => {
+      const srv = await start();
+      const khanh = await connect(DEVICES.khanhPhone);
+      const long = 'x'.repeat(79) + 'yz' + ' tail';
+      await sendMsg(khanh, 'c1', long);
+      expect((await srv.ctx.ports.summaries.get('c1'))!.last_preview).toBe('x'.repeat(79) + 'y…');
+      await sendMsg(khanh, 'c1', '', { media_key: 'ap-southeast-1/2026/11/abc' });
+      expect((await srv.ctx.ports.summaries.get('c1'))!.last_preview).toBe('[media]');
+    });
+
+    test('the summary is written before the ack, so a client that gets msg_ack can already see the row in the list', async () => {
+      const srv = await start();
+      const order: string[] = [];
+      const upsert = srv.ctx.ports.summaries.upsert.bind(srv.ctx.ports.summaries);
+      srv.ctx.ports.summaries.upsert = async (s) => { order.push('summary'); await upsert(s); };
+      srv.ctx.events.on('message_acked', () => { order.push('ack'); });
+      const khanh = await connect(DEVICES.khanhPhone);
+      await sendMsg(khanh, 'c1', 'ordered');
+      expect(order).toEqual(['summary', 'ack']);
+    });
+  });
 });
