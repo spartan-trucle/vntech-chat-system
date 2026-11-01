@@ -12,8 +12,9 @@ at Messenger / WhatsApp scale.
   (Truc on a phone and a laptop, Khanh on a phone, three scripted group members) with a simulated server
   and a trace of every hop. Drop a network, send, reconnect, read on one device; check the trace against
   `design.md`. Single file, no backend. Not the protocol prototype: that is the Node.js server in design §Prototype.
-- [`docs/design.md`](docs/design.md) — decisions so far (heartbeat and reconnect, history pagination),
-  and [`docs/diagrams/high-level.html`](docs/diagrams/high-level.html), the interactive architecture diagram.
+- [`docs/design.md`](docs/design.md) — the decisions, one deep-dive section per component, and §7
+  **What the prototype changed**: what the build found, what was written back, what is now a question for the author.
+  Plus [`docs/diagrams/high-level.html`](docs/diagrams/high-level.html), the interactive architecture diagram.
 - [`docs/diagrams/flows.md`](docs/diagrams/flows.md) — Mermaid sequence diagrams for the nine flows of
   specification §4.2; open decisions appear as notes, never as arrows.
 - [`docs/specification.md`](docs/specification.md) — the brief: requirements, scale, the

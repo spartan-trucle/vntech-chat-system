@@ -1,7 +1,7 @@
 # ADR: Sync queue backing and cursor ownership
 
 Date: 2026-11-01
-Status: Accepted
+Status: Accepted, amended 2026-11-01 after the prototype (B3, S2; design §7.3)
 Author: Truc Le
 
 ## Context
@@ -52,5 +52,23 @@ costs ~600 GB of memory per day before replication.
 ## Conditions
 
 - Slow path (summary + load on open) is implemented and rate-limited before the queue is
-  relied on in the prototype.
+  relied on in the prototype. **Met**: B4's token bucket landed before B3, verified in
+  B3's plan.
 - The 24 h window is stated in the spec's non-functional requirements.
+
+## Amendments (2026-11-01, from the prototype)
+
+- **Four operations, not three.** Deciding that a stream was trimmed past a device's
+  cursor needs the oldest retained id (`XINFO STREAM`, first entry); `XADD`, `XRANGE`
+  and `XTRIM` cannot answer it. The "map one-to-one onto Redis commands" claim holds for
+  four commands. `MAXLEN` eviction must feed the same signal.
+- **The slow-path rule.** "Cursor below the oldest retained id" is not decidable on its
+  own (an idle device and a never-appended stream look alike). The rule that works: the
+  device takes the slow path when its cursor is below the last trim boundary that
+  actually dropped entries from its stream. It errs towards more replay, as §4.7 requires.
+- **Replay beside the frame chain.** The ack of a batch arrives on the socket that sent
+  the `hello`; the server must keep handling that connection's frames while the replay
+  waits, or it deadlocks (design §4.4, amended).
+- **Open, for the author.** Nothing marks a batch end on the wire (`batch_end` flag or
+  `replay_done` frame, design §7.3); and with real Redis one more `XRANGE` after the
+  switch to live is needed to close the append-after-empty-read window (B9).

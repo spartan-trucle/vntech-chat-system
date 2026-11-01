@@ -1,7 +1,7 @@
 # ADR: Prototype runtime for the chat server
 
 Date: 2026-11-01
-Status: Accepted
+Status: Accepted; conditions met 2026-11-01 (design §7)
 Author: Truc Le
 
 ## Context
@@ -57,3 +57,15 @@ memory per socket will not be representative.
   messages, duplicate send is deduplicated by client message ID, chat list renders from
   the summary before the replay finishes.
 - Production runtime is re-decided separately if the exercise ever moves past practice.
+
+## Outcome (2026-11-01)
+
+Built under `prototype/` in one day of parallel agent lanes: eight in-memory ports with
+contract tests, seven modules behind one composition root, a scripted client that can
+suppress pongs, blackhole its radio and drop sockets uncleanly. The four scenarios above
+plus presence (S5) and media (S6) pass as scripted runs over the real server, on fake time
+with the design's numbers and (S1, S5) on real timers; 258 tests. Two core changes were
+needed after the scaffold, both test-first: a veto hook before the store write, and the
+replay running beside the connection's frame chain (design §4.4). What the build changed
+in the design is in `docs/design.md` §7. The "prototype turns into the product" risk did
+not materialise: no auth, no persistence, one process, open decisions left open in code.

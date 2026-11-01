@@ -180,6 +180,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <a href="#requirements">Requirements</a>
     <a href="#numbers">Numbers</a>
     <a href="#components">Components</a>
+    <a href="#c-learned">Learned</a>
     <a href="#followups">Follow-ups</a>
     <button class="toggle" id="theme" type="button" aria-label="Toggle dark mode">Dark</button>
   </nav>
@@ -269,6 +270,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <tr><td><a href="#c-presence">Presence</a></td><td>Detect locally in 10 s; deliver by subscription to who is looking; bounded propagation; cheap lease</td><td><span class="state decided">decided</span></td></tr>
       <tr><td><a href="#c-media">Media</a></td><td>Server never touches bytes; client compresses; regional buckets; CDN for group media only</td><td><span class="state decided">decided</span></td></tr>
       <tr><td><a href="#c-runtime">Runtime and prototype</a></td><td>Node.js + TypeScript prototype under <code>prototype/</code>, built; its six scenarios S1–S6 pass (drop detection, replay from the cursor, dedup, list before replay, presence debounce, media metadata only); production runtime deliberately undecided</td><td><span class="state open">prototype done, production open</span></td></tr>
+      <tr><td><a href="#c-learned">What the prototype changed</a></td><td>Fifteen findings from the build: six written back into the design (§1.2, §3.6, §4.4, §5.2, §5.4, sync-queue ADR), three new questions for the author (batch end on replay, delivery cursor on ack, debounce versus reconnect timing)</td><td><span class="state open">3 questions open</span></td></tr>
     </tbody>
   </table>
 </section>
@@ -700,6 +702,38 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   </div>
 </article>
 
+<!-- ---------- LEARNED ---------- -->
+<article class="topic" id="c-learned">
+  <header>
+    <div><p class="kicker">After the build</p><h2>What the prototype changed</h2></div>
+    <p class="sum">Fifteen things the prototype found that the notebook did not predict. Six changed design text, three are new questions for the author, the rest are notes. Full write-up: <a href="design.md">design.md §7</a>.</p>
+  </header>
+  <div class="cols">
+    <div class="wide">
+      <table class="plain">
+        <thead><tr><th>Found in</th><th>What the build found</th><th>What changed</th></tr></thead>
+        <tbody>
+          <tr><td>B3 · S2</td><td>An <code>ack</code> sent during a replay could never be handled: the server ran one connection's frames in order and <code>hello</code> awaited the replay, so the replay waited for an ack stuck behind the hello. The §4.4 sequence hid the deadlock.</td><td><span class="state decided">design</span> §4.4: the replay runs beside the connection's frame handling, in a <code>replay</code> phase; fixed in the prototype's core.</td></tr>
+          <tr><td>B3</td><td>Nothing on the wire marks where a replay batch ends; the client acks on a count or 20 ms of silence. "Batches of 100, ack per batch" assumed the device could tell.</td><td><span class="state open">open</span> §4.7: a <code>batch_end</code> flag on the last deliver, or a <code>replay_done</code> frame. Author.</td></tr>
+          <tr><td>B8 · S1</td><td>With the design's numbers, offline is published at t+15–16 s (dead at t+11 s plus the 5 s debounce) in the same second the client's reconnect lands (15 s mirror rule plus 1 s backoff). Every half-open drop with the network back within 15 s shows the watcher a flap.</td><td><span class="state open">question</span> §5.4: the 5 s debounce, the 15 s mirror rule and the first backoff were sized independently; <code>dead + debounce &gt; mirror + backoff</code> fails by ≈ 1.3 s. Lengthen the debounce, shorten the mirror rule, or accept the flap for unclean drops. Author.</td></tr>
+          <tr><td>B6 · S5</td><td><code>last_seen</code> is the drop time (the last pong), not the time the debounce fired; the lease timer runs only while someone is online; a watcher arriving during pending-offline is told online and still gets the offline that may follow.</td><td><span class="state decided">design</span> §5.2, §5.4 and the presence ADR, amended.</td></tr>
+          <tr><td>B1 · S1</td><td>Server-side death (≈ t+11 s) and the client's 15 s mirror rule are independent detections: a device with its radio off sees neither the close nor the terminate.</td><td><span class="state decided">design</span> §1.2: two detections, asserted separately.</td></tr>
+          <tr><td>B0 · B5</td><td>Eight ports were needed, not five. Push hints go to every device a user has, and the routing table only knows the connected ones: a device directory is required.</td><td><span class="state decided">design</span> §3.6 step 1: device directory first, routing table second.</td></tr>
+          <tr><td>B2</td><td>"Pending" on the bounded per-destination buffer has tick granularity: all pushes issued in one event-loop tick count as pending even on a healthy socket. Loopback absorbs ≈ 0.5 MB before backpressure shows.</td><td><span class="state open">input</span> to the backpressure write-up (A3 item 4): the bound is worst-case fan-out per tick plus headroom, not a small number.</td></tr>
+          <tr><td>B7 · S6</td><td>The roadmap's <code>msg</code> frame omitted <code>media_size</code>, <code>media_mime</code> and <code>sha256</code>, which §6.2 sends; the build followed the roadmap until the gap showed.</td><td>No change: the design was right. A plan must quote the design's frame, never paraphrase it.</td></tr>
+          <tr><td>B3</td><td>For real Redis: "empty XRANGE, then flip to live" needs one more XRANGE after the flip; and "trimmed past the cursor" needs the oldest retained id (XINFO), a fourth operation, with MAXLEN eviction fed into the same boundary.</td><td><span class="state decided">ADR</span> sync-queue ADR amended: four operations; slow path when the cursor is below the last trim boundary that dropped entries.</td></tr>
+          <tr><td>B5 · review</td><td>Delivery cursors advance when a push is handed to the socket, not on a client-sent delivered receipt (§3.4), because the protocol has no such frame; a push lost to the backpressure timeout still counts as delivered.</td><td><span class="state open">open</span> §7.3: advance the delivery cursor on the replay <code>ack</code> instead. Author.</td></tr>
+          <tr><td>B4</td><td>The HTTP router is first-match (a test probe collided with the page route); the unread count has no sender filter until the sender's own cursor advances on store.</td><td>No change.</td></tr>
+          <tr><td>B6</td><td>Once every client frame has a handler, the core's unhandled-frame path has no test probe left.</td><td>Prototype note.</td></tr>
+          <tr><td>B1</td><td>One client test mixes fake and real time and fails about once in ten full-suite runs under load.</td><td>Prototype note; the scenarios use larger budgets.</td></tr>
+          <tr><td>A4</td><td>N2 and N6 were neither addressed nor deferred; spec §7 row 3 says seven flows where §4.2 has nine.</td><td>Already A3 item 6 in <a href="rubric.md">rubric.md</a>; the second is a spec typo.</td></tr>
+          <tr><td>Orchestration</td><td>Agent worktrees were cut from <code>origin/main</code>, not the lane branch; every subagent brief had to open with a fast-forward.</td><td>Process note.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</article>
+
 <!-- ===================== FOLLOW-UPS ===================== -->
 <section id="followups">
   <div class="intro">
@@ -709,6 +743,8 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   <ol class="asks">
     <li><strong>Production runtime.</strong> Component 8. Re-decide when there is a product; a second prototype in Kotlin or BEAM is the honest way to compare connection handling.</li>
     <li><strong>Service discovery.</strong> Components 1 and 6 depend on it (least-loaded server, mark-all-offline on node loss). The book says ZooKeeper; today that reads as etcd, Consul, or the orchestrator.</li>
+    <li><strong>Batch end on replay, and delivered receipts.</strong> Component 4. Nothing marks where a replay batch ends (<code>batch_end</code> flag or <code>replay_done</code> frame), and the replay <code>ack</code> could replace §3.4's delivered receipt. From the prototype, <a href="design.md">design.md §7.3</a>.</li>
+    <li><strong>Presence debounce versus the client's reconnect.</strong> Components 1 and 6. The 5 s debounce, the 15 s mirror rule and the first backoff were sized independently and a half-open drop shows a flap; the relation they should keep is in <a href="design.md">design.md §7.4</a>.</li>
     <li><strong>The 10 % media rate.</strong> Component 7. The remaining lever on the dominant cost; halving it halves media.</li>
     <li><strong>Discord-style communities.</strong> Groups of 10 k+ change fan-out (on read), presence (a member list is a "who is online" screen), and the message store partitioning. A separate design pass, spec §8.3.</li>
     <li><strong>The A3 decision list</strong> lives in <a href="rubric.md">rubric.md</a>: the spec §7 run scores six rows pass and three fail, and its last table names the six decisions that close the fails (service discovery, reply quoting, store-primary failure, backpressure in <code>design.md</code>, the five paging metrics, N2 and N6). <a href="tradeoffs.md">tradeoffs.md</a> lists the same open bullets at its top. The prototype plans are in <code>.planning/plans/</code> and the code under <code>prototype/</code>.</li>

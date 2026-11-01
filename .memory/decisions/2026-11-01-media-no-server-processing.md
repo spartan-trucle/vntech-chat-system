@@ -48,5 +48,9 @@ fleet never sees a media byte.
 
 ## Conditions
 
-- The prototype's client stub sends a `media_key` reference only; no bytes.
+- The prototype's client stub sends a `media_key` reference only; no bytes. **Met**
+  (S6, 2026-11-01): the message carries `media_key`, size, mime and sha256 as §6.2 says;
+  every frame on both sockets is under 600 bytes and carries no URL; the intent over
+  10 MB is refused before any byte moves. The roadmap had paraphrased the §6.2 frame
+  without the metadata; the design was the authority (design §7.1, row 8).
 - Revisit the CDN split if cross-region conversations become common.

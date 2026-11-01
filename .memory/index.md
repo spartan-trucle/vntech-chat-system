@@ -2,9 +2,12 @@
 
 ## Decisions
 - [2026-11-01] Media: server never processes bytes, client compresses, regional buckets, CDN for groups → `.memory/decisions/2026-11-01-media-no-server-processing.md`
-- [2026-11-01] Presence by subscription, 10 s detection, bounded propagation, decoupled lease → `.memory/decisions/2026-11-01-presence-subscription.md`
-- [2026-11-01] Sync queue on Redis Streams, 24 h window; cursor ownership → `.memory/decisions/2026-11-01-sync-queue-redis-streams.md`
-- [2026-11-01] Prototype runtime for the chat server: Node.js + TypeScript → `.memory/decisions/2026-11-01-prototype-runtime-nodejs.md`
+- [2026-11-01] Presence by subscription, 10 s detection, bounded propagation, decoupled lease → `.memory/decisions/2026-11-01-presence-subscription.md` (amended after the prototype: `last_seen` is the drop time, lease only while someone is online; open: debounce versus the client's reconnect)
+- [2026-11-01] Sync queue on Redis Streams, 24 h window; cursor ownership → `.memory/decisions/2026-11-01-sync-queue-redis-streams.md` (amended after the prototype: four operations, trim-boundary slow-path rule, replay beside the frame chain; open: batch-end marker)
+- [2026-11-01] Prototype runtime for the chat server: Node.js + TypeScript → `.memory/decisions/2026-11-01-prototype-runtime-nodejs.md` (conditions met: S1–S6 pass, 258 tests)
+
+## What the prototype changed (2026-11-01)
+- `docs/design.md` §7: fifteen findings from the build, six written back into §1.2, §3.6, §4.4, §5.2, §5.4 and the sync-queue ADR; three new questions for the author (batch end on replay, delivery cursor on ack, debounce versus reconnect timing). Board section "What the prototype changed" on `docs/index.html`.
 
 Design decisions made in the discussion are recorded in `docs/design.md` and on the
 "Arguments" section of `docs/index.html`; the ADR folder holds the ones that have a

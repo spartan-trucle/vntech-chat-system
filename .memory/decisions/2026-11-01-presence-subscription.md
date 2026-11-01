@@ -1,7 +1,7 @@
 # ADR: Presence delivery and freshness
 
 Date: 2026-11-01
-Status: Accepted
+Status: Accepted, amended 2026-11-01 after the prototype (B6, S5, S1; design §7.4, §7.5)
 Author: Truc Le
 
 ## Context
@@ -49,4 +49,22 @@ kept at 10 s detection for free.
 ## Conditions
 
 - The prototype's scripted client exercises watch/unwatch and the debounce window.
+  **Met** (S5): watch batched per 500 ms and answered with the current state; offline
+  seen at ≈ t+15–16 s with `last_seen = t`; a reconnect inside the debounce publishes
+  nothing; 60 s of pongs write no lease.
+
+## Amendments (2026-11-01, from the prototype)
+
+- `last_seen` is the drop time: the last pong from the user's last device, not the
+  moment the debounce fired.
+- The lease renewal runs only while at least one user is online on the server.
+- A watcher that subscribes during `pending-offline` is told `online` and still
+  receives the `offline` that may follow; the 500 ms batching can shift a transition but
+  never lose one.
+- **The "never shown" claim is narrower than written.** "A drop-and-reconnect under 5 s
+  is debounced and never shown" holds for clean closes and app restarts. For a half-open
+  drop, the client cannot reconnect before ≈ t+16 s (15 s mirror rule plus backoff) and
+  the debounce fires at t+15–16 s, so the watcher sees offline then online however short
+  the outage was. **Open, for the author** (design §7.4): the relation the debounce, the
+  mirror rule and the first backoff must keep.
 - Revisit for Discord-style communities, where a channel member list is such a screen.

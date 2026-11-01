@@ -49,6 +49,10 @@ exists for the unclean case only.
 the connection dead (≈ 10 s). The client runs the mirror rule: no ping seen for 15 s
 means the socket is half-open, close it and reconnect.**
 
+These are two independent detections, not one (prototype, §7.6): a device whose radio
+is off sees neither the server's close frame nor its terminate, so the server's death at
+≈ t+11 s tells the client nothing; the client must notice on its own at t+15 s.
+
 Why server-initiated and protocol-level (opcode `0x9`/`0xA`) rather than an application
 JSON message from the client:
 
@@ -350,8 +354,11 @@ cursor per user, not per device, is what makes multi-device read state consisten
 
 On every stored message, after the fan-out to online devices:
 
-1. Look up the recipient's devices in the routing table. Devices with a live connection
-   got the message over the socket already; **no push for them**.
+1. Look up the recipient's devices in the **device directory** (every device the user
+   has registered), then the routing table for which of them hold a live connection; the
+   routing table alone is the wrong set, it knows only the connected devices (prototype,
+   §7.7). Devices with a live connection got the message over the socket already; **no
+   push for them**.
 2. For every device without a live connection, send a push through APNs/FCM carrying
    `{conversation_id, message_id, sender_display_name}` and a preview flag. Never the
    body: it leaves our infrastructure and it would go stale if the message is deleted.
@@ -480,6 +487,15 @@ opens a conversation before its messages have replayed, the client pages that
 conversation from the store directly (§2.3, history path) rather than waiting for the
 queue; the queue replay later dedups by message ID on the client.
 
+**The replay runs beside the connection's frame handling, not inside the `hello` handler**
+(prototype, §7.2). The server must keep handling the device's frames while the replay
+waits for each batch's ack, because the ack arrives on the same socket; a server that
+processes one connection's frames strictly in order and lets `hello` block until the
+replay is done deadlocks on the first batch. The connection stays in a `replay` phase
+until the drain ends, so the fan-out of §4.2 does not push to it directly and a message
+sent meanwhile reaches it through the queue, once. How the device knows a batch has
+ended is not defined here; see §7.3 (open).
+
 ### 4.5 Bounds
 
 - **Window.** 24 h, a product decision: mobile reconnects are seconds to hours; a device
@@ -532,6 +548,11 @@ message ID.
 Invariant: **a cursor advances only after the device has acked the batch**, never when
 the server has merely sent it. The ack is the only thing that moves the number.
 
+Open (prototype, §7.3): nothing on the wire marks the end of a batch, so a device
+cannot tell a full batch from the start of a larger one; a `batch_end` flag on the last
+`deliver` or a `replay_done` frame is needed. The prototype acks on a count or a 20 ms
+silence meanwhile.
+
 ---
 
 ## 5. Presence: detect locally, deliver only to watchers
@@ -565,7 +586,11 @@ the server has merely sent it. The ack is the only thing that moves the number.
 - `online` is per user, not per device: one live device anywhere means online.
 - `pending-offline` is the debounce. Mobile radios drop and recover in a second or two;
   without the window every tunnel and lift would flap the dot for all watchers.
-- `last_seen` is written on the transition to offline, from the server's clock.
+- `last_seen` is written on the transition to offline and is the **drop time**: the
+  server's last pong from the user's last device, not the moment the debounce fired
+  (prototype, §7.5).
+- The lease renewal timer (§1.5) runs only while at least one user is online on the
+  server; an idle server writes nothing (prototype, §7.5).
 
 ### 5.3 Where the state lives and who moves it
 
@@ -598,7 +623,15 @@ A's phone reconnects at t+12 s instead
 ```
 
 Online transitions are immediate: `hello` publishes `online` at once, debounced only in
-the sense that a `pending-offline → online` cancel emits nothing.
+the sense that a `pending-offline → online` cancel emits nothing. A watcher that
+subscribes during `pending-offline` is told `online` and still receives the `offline`
+that may follow (prototype, §7.5).
+
+**Timing caveat (prototype, §7.4, open):** with §1.4's numbers a client that suffered a
+half-open drop reconnects at ≈ t+16 s, the same second the debounce above fires at
+t+15–16 s, so a watcher sees offline then online for every unclean drop whose network is
+back within 15 s. The 5 s debounce protects clean closes; the relation it should keep to
+the mirror rule and the first backoff is a question for the author.
 
 ### 5.5 Cost, revisited against estimation.md §2
 
@@ -713,7 +746,158 @@ Estimation §3.2 at the revised numbers: 100 TB/day uploaded, ~500 TB/day downlo
 
 ---
 
+## 7. What the prototype changed
+
+Written 2026-11-01, after the prototype under `prototype/` (Node.js + TypeScript, one
+process, in-memory ports, a scripted multi-device client) reached the runtime ADR's
+definition of done: six scripted scenarios over the real server, all passing on fake time
+with the design's numbers and, for S1 and S5, on real timers; 258 tests; typecheck clean.
+Every surprise the build reported is listed here. The ones that change design text are
+written back into the section they touch, marked "(prototype, §7.n)". Nothing here
+decides an item on the A3 list; two new open questions are added to it at the end.
+
+### 7.1 Every surprise, and whether it changed the design
+
+| # | Found in | What the build found | Design change |
+|---|----------|----------------------|---------------|
+| 1 | B3, S2 | An `ack` sent during a replay could never be handled: the server handled one connection's frames strictly in order and `hello` awaited the replay, so the replay waited for an ack that sat behind the hello in the same chain. §4.4 drew the replay and the acks as one lane and hid the deadlock. | **Yes**, §4.4 (7.2) |
+| 2 | B3 | Nothing on the wire marks where a replay batch ends. §4.2 says batches of 100 and §4.7 says only the ack moves the cursor, but neither says how the device knows a batch is complete; the prototype acks on a count or on 20 ms of silence, which is a heuristic, not a protocol. | **Open**, §4.7 (7.3) |
+| 3 | B8, S1 | With the design's numbers the server publishes `offline` at t+16 s (dead at t+11 s, plus the 5 s debounce) in the same second the client's own reconnect lands (15 s mirror rule plus 1 s backoff). A watcher sees offline then online for every half-open drop, however short the outage. §5.2's debounce and §1.4's reconnect were sized independently. | **Question for the author**, §5.4 (7.4) |
+| 4 | B6, S5 | Three rulings the design left implicit: `last_seen` is the drop time (the last pong), not the time the debounce fired; the lease renewal timer exists only while some user is online; a watcher arriving during `pending-offline` is told `online` and still receives the `offline` that may follow, so the client's 500 ms batching can shift a transition but never lose one. | **Yes**, §5.2, §5.4 (7.5) |
+| 5 | B1, S1 | Server-side death (two missed pongs, seen by the 1 s sweeper at ≈ t+11 s) and the client's 15 s mirror rule are independent detections: a device whose radio is off sees neither the close nor the terminate. S1 asserts both. | **Yes**, §1.2 (7.6) |
+| 6 | B0, B5 | Eight ports were needed, not five. Besides membership and the cursor tables of §3.3, a **device directory** is required: push hints (§3.6) go to every device a user has, and the routing table only knows the connected ones. | **Yes**, §3.6 (7.7) |
+| 7 | B2 | "Pending" on the bounded per-destination buffer has tick granularity: the socket library reports a flush on the next tick, so every push issued within one tick counts as pending even on a healthy socket; the bound must leave room for one tick's worth of fan-out. On loopback the kernel absorbs about 0.5 MB before a blackholed peer backs the writer up, so the backpressure test corks the socket. | Input to the backpressure write-up, A3 item 4 (7.8) |
+| 8 | B7, S6 | The roadmap's `msg` frame omitted `media_size`, `media_mime` and `sha256`, which §6.2 sends; the build followed the roadmap until the gap showed and was fixed across the protocol, the core and the messaging module. | **No**: the design was right. A plan must quote the design's frame, never paraphrase it |
+| 9 | B3 | Two notes for real Redis (B9): "empty `XRANGE`, then flip to live" leaves a window where an append lands after the empty read and before the flip, so one more `XRANGE` after the flip is needed; in one process the flip is in the same microtask drain, so the prototype is safe without it. And deciding "trimmed past the cursor" needs the stream's oldest retained id (`XINFO STREAM`), a fourth operation; `MAXLEN` eviction must be reported the same way. | **Yes**, sync-queue ADR amended (7.3) |
+| 10 | B5, C review | Delivery cursors advance when the push is handed to the socket, not on a client-sent delivered receipt as §3.4 says, because the protocol has no such frame. A push lost to the backpressure timeout therefore still counts as delivered. | **Open**: the replay `ack` is the natural trigger (7.3) |
+| 11 | B4 | The HTTP router is first-match, so a core test's probe route collided with the real page route; the unread count has no sender filter until the sender's own read cursor advances on store, which B5 does. | No |
+| 12 | B6 | Once every client frame type has a handler, the core's unhandled-frame path has no test probe left. | No (prototype note) |
+| 13 | B1 | One client test mixes fake and real time and fails about once in ten full-suite runs under load; the scenarios use larger budgets. | No (prototype note) |
+| 14 | A4 | N2 (availability) and N6 (security) were neither addressed nor deferred; spec §7 row 3 says seven flows where §4.2 has nine. | Already A3 item 6 in `rubric.md`; the second is a spec typo |
+| 15 | B, orchestration | Agent worktrees were cut from `origin/main`, not the lane branch; every subagent brief had to open with a fast-forward onto the lane branch. | No (process note) |
+
+### 7.2 §4.4: the replay runs beside the connection's frame handling
+
+The sequence in §4.4 shows `hello{cursor}`, then missed messages in batches, then an ack
+per batch, then live traffic, as if they were one lane. They are not. The replay has to
+**wait** for the device's ack of each batch (§4.7), and that ack arrives on the same
+socket as the `hello` that started the replay. If the server processes a connection's
+frames strictly in order and the hello handler does not return until the replay is done,
+the ack can never be processed and the replay never ends. The prototype hit exactly this
+and fixed it in the core: the handshake returns as soon as `hello_ack` is sent, the replay
+runs as a detached task for that connection, and frames that arrive meanwhile (acks, the
+outbox flush of §1.4, receipts) are handled normally. The connection stays in the
+`replay` phase, so the fan-out of §4.2 does not push to it directly and a message sent
+during the replay reaches it through the queue, once. Written into §4.4.
+
+### 7.3 §4.2, §4.7: a batch end, the queue's fourth operation, and delivered receipts
+
+Three things the queue section does not say, found while building B3 and B5.
+
+- **What marks a batch end.** "Replay in batches of 100, ack per batch" assumes the device
+  can tell where a batch ends. It cannot: a batch of 100 and the first 100 of a batch of
+  200 look the same, and the last batch is short. The prototype acks after 100 frames or
+  after 20 ms of silence, which works and is not a protocol. Two candidates, **open for
+  the author**: a `batch_end` marker on the last `deliver` of each batch (zero extra
+  frames), or a `replay_done` frame after the last batch (one extra frame, and it also
+  tells the device the stream is drained). Either keeps §4.7's rule that only the ack moves
+  the cursor.
+- **The queue needs four operations, not three.** Deciding "the stream was trimmed past
+  this cursor" (§4.2 last paragraph) needs the oldest retained id, which `XRANGE`,
+  `XADD` and `XTRIM` cannot give; Redis has it as `XINFO STREAM` (first entry). The
+  prototype also found that "cursor below the oldest retained id" is not decidable on its
+  own: a device that acked its last live message and then received nothing has a cursor
+  above the oldest entry, while a stream that was never appended to looks empty. The
+  rule that works is **cursor below the last trim boundary that actually dropped entries
+  → slow path**, which errs towards more replay as §4.7 requires. `MAXLEN` eviction must
+  feed the same boundary. The sync-queue ADR is amended accordingly.
+- **Delivered receipts.** §3.4 says the client sends a delivered receipt when the queue
+  hands it new messages; the protocol (B0) has only the read receipt, so the prototype
+  advances the delivery cursor when the push is handed to the socket. That overstates
+  delivery for a push dropped by the backpressure timeout. The replay `ack` already says
+  exactly what the device received, so **open for the author**: advance the delivery
+  cursor on `ack{up_to_stream_id}` and drop the separate delivered receipt from §3.4.
+
+### 7.4 §5.2 and §1.4: the debounce and the client's reconnect were sized independently
+
+The timeline S1 and S5 produce with the design's numbers, for a device whose radio drops
+at t and is back at any time before t+15 s:
+
+```
+t        radio off; no close frame; last pong was at t
+t+10–11  server: two missed pings; the 1 s sweeper kills the socket, deletes the route
+         → user's last device → pending-offline, 5 s timer
+t+15     client: no ping for 15 s → closes the half-open socket, schedules reconnect
+t+15.7–16.3  client reconnects (1 s base, ±30 % jitter) → hello → online
+t+15–16  server: debounce fires → offline, last_seen = t → PUBLISH → watcher sees offline
+```
+
+The last two lines land in the same second. The debounce was written for "a drop and a
+reconnect within 5 s is never shown" (§5.1), with the reconnect at t+12 s in the §5.4
+example; but a client that follows §1.4 cannot reconnect before t+15.7 s after a
+half-open drop, because it only notices at t+15 s. So for the unclean case, which is the
+case the heartbeat exists for (§1.1), every drop whose network is back within 15 s shows
+the watcher an offline-then-online flap, and the debounce protects only clean closes and
+app restarts.
+
+**Question for the author, not decided here.** The two numbers need a stated relation.
+For the reconnect to land inside the debounce, `dead_max + debounce > mirror + backoff_max`,
+with the design's numbers `11 + 5 > 15 + 1.3`, which is false by about 1.3 s. Three ways
+to make it hold, each with a cost: lengthen the debounce to about 7 s (offline shown at
+t+18 s, past the 15 s "normal" target in §5.1); shorten the client's mirror rule below the
+server's detection, say 10 s (the client then reconnects at ≈ t+11 s, inside the window,
+at the price of a client that gives up on a slow-but-alive socket sooner); or accept the
+flap for half-open drops and state that the debounce covers clean closes only. Added to
+the open list at the end of this document.
+
+### 7.5 §5: three rulings written back
+
+- `last_seen` is the drop time: the server's last pong from the user's last device. The
+  prototype keeps `last_pong_at` on the dead connection and writes it on the final
+  transition, so a watcher reads "last seen" as the moment the person was really there,
+  not 15 s later. Written into §5.2.
+- The lease renewal timer runs only while at least one user is online on the server; an
+  idle server writes nothing. The ADR's "renew every one of its users' keys" assumed a
+  server always has users. Written into §5.2.
+- A watcher who subscribes during `pending-offline` is told `online` (the state as the
+  outside sees it) and is in the set for the `offline` that may follow. That is what lets
+  the client's 500 ms batching (presence ADR) and the 5 s debounce compose without a lost
+  transition. Written into §5.4.
+
+### 7.6 §1.2: two detections, not one
+
+The heartbeat is two independent mechanisms: the server's (two missed pongs, swept once a
+second, so death at t+10 to t+11 s) and the client's mirror rule (no ping for 15 s). The
+design wrote them as one decision; the prototype showed why they must be asserted
+separately: a device whose radio is off sees neither the server's close frame nor its
+terminate, so nothing the server does tells the client anything. The client must notice
+on its own. Written into §1.2.
+
+### 7.7 §3.6: push hints need a device directory
+
+Step 1 of §3.6 says "look up the recipient's devices in the routing table". The routing
+table holds `route:{user}:{device}` for **connected** devices only (§1.5), which is the
+wrong set: the devices that need a push are exactly the ones not in it. The system needs
+a device directory, every device a user has registered, read on fan-out and on push; the
+routing table then says which of those are live. Written into §3.6.
+
+### 7.8 Board, Component 3: the bounded buffer has a tick
+
+For the backpressure write-up that A3 item 4 moves into this document: a per-destination
+bound counts pushes between "handed to the socket" and "flushed", and the socket library
+reports the flush asynchronously, so all pushes issued within one event-loop tick are
+pending at once even on a healthy socket. The bound must be sized as `max(worst-case
+fan-out per tick) + headroom`, not as a small number; the prototype's default is 1 000 with
+a 5 s timeout. A push that times out is dropped and the device catches up through its
+queue, which is the board's rule and held under test.
+
+---
+
 ## Open on the board after this section
 
 - Production runtime — deliberately undecided; the prototype is Node.js (ADR above).
 - Service discovery: §1.4 and §1.5 both depend on it; ZooKeeper vs etcd vs orchestrator.
+- Batch end on replay: `batch_end` flag or `replay_done` frame (§7.3); and whether the
+  replay `ack` should advance the delivery cursor in place of §3.4's delivered receipt.
+- Presence debounce versus the client's reconnect: the relation the 5 s debounce, the
+  15 s mirror rule and the first backoff must keep (§7.4).
