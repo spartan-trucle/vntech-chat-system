@@ -98,8 +98,9 @@ describe('chat server core (composition root)', () => {
     c.send(hello(DEVICES.trucPhone));
     await c.next('hello_ack');
     c.send({ t: 'ack', up_to_stream_id: '7-0' });
+    // The watch reply (B6) is the barrier: frames of one connection run in order, so the ack handlers ran first.
     c.send({ t: 'watch', user_ids: ['khanh'] });
-    expect(await c.next('error')).toMatchObject({ code: 'unhandled' });
+    expect(await c.next('presence')).toMatchObject({ user_id: 'khanh' });
     expect(seen).toEqual(['a:A1:7-0', 'b:7-0']);
   });
 
@@ -188,7 +189,7 @@ describe('chat server core (composition root)', () => {
   });
 
   test('http beside the socket: /health from the core, registered routes with params and query, 404 otherwise', async () => {
-    server.ctx.http.route('GET', '/conversations/:id/messages', async (req) => ({
+    server.ctx.http.route('GET', '/probe/:id/things', async (req) => ({
       status: 200,
       body: { id: req.params['id'], limit: req.query['limit'] ?? null },
     }));
@@ -196,7 +197,7 @@ describe('chat server core (composition root)', () => {
     const health = await fetch(`${server.httpUrl}/health`);
     expect(health.status).toBe(200);
     expect(await health.json()).toMatchObject({ ok: true, server_id: 'srv-1' });
-    const page = await fetch(`${server.httpUrl}/conversations/c1/messages?limit=50`);
+    const page = await fetch(`${server.httpUrl}/probe/c1/things?limit=50`);
     expect(await page.json()).toEqual({ id: 'c1', limit: '50' });
     const echo = await fetch(`${server.httpUrl}/echo`, { method: 'POST', body: JSON.stringify({ a: 1 }), headers: { 'content-type': 'application/json' } });
     expect(echo.status).toBe(201);

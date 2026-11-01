@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { Snowflake } from './ids.js';
-import { decodeFrame, encodeFrame, FrameError, type AppState, type ClientFrame, type ClientFrameType, type DeviceId, type HelloAckFrame, type HelloFrame, type ServerFrame, type UserId } from './protocol.js';
+import { decodeFrame, encodeFrame, FrameError, type AppState, type ClientFrame, type ClientFrameType, type DeviceId, type HelloAckFrame, type HelloFrame, type MsgFrame, type ServerFrame, type UserId } from './protocol.js';
 import {
   InMemoryConversations, InMemoryCursors, InMemoryDevices, InMemoryMessageStore, InMemoryPresenceStore,
   InMemoryRouteTable, InMemorySummaries, InMemorySyncQueue,
@@ -122,6 +122,12 @@ export interface ServerEvents {
   device_connected: { conn: Connection; frame: HelloFrame };
   /** Entry removed and route deleted; `last_device` is the `SCARD route:{user} → 0` check of §1.5. */
   device_disconnected: { conn: Connection; reason: DisconnectReason; last_device: boolean };
+  /**
+   * Messaging: a `msg` passed membership and is about to be stored. A listener that calls
+   * `reject` stops it: the sender gets an `error{code, message}` and nothing is written.
+   * The media module validates the §6.2 metadata here.
+   */
+  message_received: { conn: Connection; frame: MsgFrame; reject: (code: string, message: string) => void };
   /** Messaging: row written to the message store (first in the write order). */
   message_stored: { message: import('./protocol.js').Message; sender: Connection };
   /** Messaging: `msg_ack` sent to the sender (second); the sync module appends to queues here (third). */
