@@ -221,7 +221,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   </div>
 
   <article class="layer">
-    <header><h3>Real-time transport</h3><span class="state open">open</span><p class="q">How do 10 M clients hold a connection and receive pushes without polling?</p></header>
+    <header><h3>Real-time transport</h3><span class="state decided">decided</span><p class="q">How do 10 M clients hold a connection and receive pushes without polling?</p></header>
     <p class="crit">Criteria: bidirectional, works through corporate proxies and mobile carriers, reconnect cost, library maturity on iOS, Android and web.</p>
     <div class="cands">
       <div class="cand lean"><b>WebSocket</b><span>Bidirectional, universal client support, one TCP connection per device. Needs explicit heartbeat and reconnect logic.</span></div>
@@ -230,8 +230,8 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <div class="cand"><b>MQTT / XMPP</b><span>Purpose-built messaging protocols. Great fit, smaller talent pool, heavier client story on web.</span></div>
     </div>
     <div class="verdict">
-      <div><span class="lbl">Lean</span><p>WebSocket for the real-time path; plain HTTPS for login, history paging and media. The connection carries only what must be pushed.</p></div>
-      <div class="against"><span class="lbl">Strongest case against</span><p>WebSocket gives you nothing for free: no delivery guarantees, no resumption. You end up implementing half of MQTT yourself. Why not start with MQTT?</p></div>
+      <div><span class="lbl">Decision</span><p>WebSocket for the real-time path; plain HTTPS for login, history paging and media. Server-initiated ping every 5 s, two misses = dead (10 s, matching F7); client reconnects with jittered backoff and resumes from its device cursor. Heartbeats never touch Redis. Full write-up: <a href="design.md">design.md §1</a>.</p></div>
+      <div class="against"><span class="lbl">Counterpoint, answered</span><p>"You end up implementing half of MQTT yourself." True, and §1 is that half: ping/pong, resume cursor, client-side dedup key. It is about 200 lines per platform, and we keep the ubiquity of WebSocket on web.</p></div>
     </div>
   </article>
 
@@ -251,7 +251,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   </article>
 
   <article class="layer">
-    <header><h3>Message store</h3><span class="state open">open</span><p class="q">What absorbs 115 k writes per second and serves "last 50 messages in this conversation" and "everything since cursor X"?</p></header>
+    <header><h3>Message store</h3><span class="state decided">decided</span><p class="q">What absorbs 115 k writes per second and serves "last 50 messages in this conversation" and "everything since cursor X"?</p></header>
     <p class="crit">Criteria: write throughput without a single primary, partition by conversation, range scan by message ID, 730 TB of growth, operational burden.</p>
     <div class="cands">
       <div class="cand lean"><b>Cassandra / ScyllaDB</b><span>Partition on conversation, cluster on message ID. Discord's path. Wide partitions and tombstones are the known traps.</span></div>
@@ -260,21 +260,21 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <div class="cand"><b>HBase</b><span>Facebook Messenger's original choice. Strong ordering per row, heavier to run than the rest.</span></div>
     </div>
     <div class="verdict">
-      <div><span class="lbl">Lean</span><p>Wide-column with conversation as partition key and a time-sortable message ID as clustering key. Bucketing by time to bound partition size.</p></div>
-      <div class="against"><span class="lbl">Strongest case against</span><p>Nobody on the team has run Cassandra in anger. A sharded Postgres we understand may beat a Cassandra we misconfigure. At what DAU does Postgres actually break?</p></div>
+      <div><span class="lbl">Decision</span><p>Wide-column, partition key (conversation, month bucket), clustering by message ID descending. All history kept for 5 years; open loads the newest 50, scroll-up pages by cursor over HTTPS, never over the socket. Two cursors per device: oldest-loaded (back) and last-synced (forward). Full write-up: <a href="design.md">design.md §2</a>.</p></div>
+      <div class="against"><span class="lbl">Counterpoint, parked</span><p>"Nobody has run Cassandra in anger" is a real risk, but the frame chosen is the canonical design, so the practice is to learn it. Revisit if the frame changes.</p></div>
     </div>
   </article>
 
   <article class="layer">
-    <header><h3>Message ID</h3><span class="state open">open</span><p class="q">How does every message get an ID that is unique, sortable within a conversation, and mintable at 115 k/s with no coordinator?</p></header>
+    <header><h3>Message ID</h3><span class="state decided">decided</span><p class="q">How does every message get an ID that is unique, sortable within a conversation, and mintable at 115 k/s with no coordinator?</p></header>
     <div class="cands">
       <div class="cand lean"><b>Snowflake-style (time + node + sequence)</b><span>64-bit, roughly time-ordered, generated locally. Clock skew between nodes is the risk.</span></div>
       <div class="cand"><b>Per-conversation sequence</b><span>Perfect ordering within a chat. Needs a counter per conversation, which is a hot key for busy groups.</span></div>
       <div class="cand"><b>Database-assigned</b><span>Simple, but ties ID minting to the store's write path and its availability.</span></div>
     </div>
     <div class="verdict">
-      <div><span class="lbl">Lean</span><p>Snowflake minted in the chat server. Ordering within a conversation is "good enough" and the client sorts by ID.</p></div>
-      <div class="against"><span class="lbl">Strongest case against</span><p>"Roughly ordered" means two messages sent within the same millisecond from different servers can swap. Is that acceptable in a quoted reply chain?</p></div>
+      <div><span class="lbl">Decision</span><p>Snowflake minted in the chat server; the timestamp inside the ID also selects the month bucket for pagination, so a scroll-up cursor needs no lookup.</p></div>
+      <div class="against"><span class="lbl">Counterpoint, accepted</span><p>Two messages in the same millisecond from different servers may swap. A quoted reply carries its parent ID explicitly, so the chain is still correct even if display order flips.</p></div>
     </div>
   </article>
 
@@ -295,14 +295,14 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   <article class="layer">
     <header><h3>Fan-out and queueing</h3><span class="state open">open</span><p class="q">Between "stored" and "on the recipient's screen", is there a queue, and who consumes it?</p></header>
     <div class="cands">
-      <div class="cand lean"><b>Kafka</b><span>Durable, replayable, partition per user or per conversation. Adds latency and a large operational surface.</span></div>
+      <div class="cand"><b>Kafka</b><span>Durable, replayable, partition per user or per conversation. Adds latency and a large operational surface.</span></div>
       <div class="cand"><b>Redis Streams / pub-sub</b><span>Fast and already in the stack. Durability is weaker; losing a node can lose in-flight deliveries.</span></div>
-      <div class="cand"><b>No queue: synchronous fan-out</b><span>Chat server writes, then pushes directly to recipient servers. Simplest; backpressure on a hot group hits the sender.</span></div>
+      <div class="cand lean"><b>Direct push + per-user sync queue</b><span>The textbook path: store, push straight to online recipients' servers, and append to each device's sync queue for cursor catch-up and offline delivery.</span></div>
       <div class="cand"><b>NATS JetStream</b><span>Lighter than Kafka, durable streams, less ecosystem.</span></div>
     </div>
     <div class="verdict">
-      <div><span class="lbl">Lean</span><p>A durable per-user message-sync queue, Kafka-backed, so delivery to each device cursor can be retried independently of the sender.</p></div>
-      <div class="against"><span class="lbl">Strongest case against</span><p>Kafka's p99 alone can eat most of the 500 ms budget. The textbook design pushes directly and only queues for offline users. Why pay the latency for online recipients?</p></div>
+      <div><span class="lbl">Lean</span><p>Direct push for online recipients, per-user sync queue for everything else. Kafka left the hot path once the canonical frame was chosen. What backs the sync queue is still open.</p></div>
+      <div class="against"><span class="lbl">Strongest case against</span><p>Direct push means a 100-member group with a slow recipient server stalls the sender's chat server. Where is the backpressure boundary?</p></div>
     </div>
   </article>
 
@@ -337,7 +337,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <p>Answer these in order. Each one closes at least one "open" layer above.</p>
   </div>
   <ol class="asks">
-    <li>Is this exercise optimising for <em>learning the canonical design</em> or for <em>what we would actually run</em>? The answer picks the runtime (BEAM vs Kotlin) and the store (Cassandra vs Postgres).</li>
+    <li><s>Is this exercise optimising for learning the canonical design or for what we would actually run?</s> <strong>Answered: canonical design</strong> (Alex Xu ch. 12). Closed transport, store, ID and the fan-out direction. Did <em>not</em> close the runtime: the book is language-agnostic, so BEAM vs Kotlin is still open.</li>
     <li>Where is latency measured? If it is server ingress to server egress, Kafka in the hot path is affordable. If it is device to device, it probably is not.</li>
     <li>What is the group-size roadmap? If 100 is forever, fan-out on write is fine. If 10 000 is a follow-up, design the threshold now.</li>
     <li>Is 10 seconds for presence a product promise or a placeholder? Each halving roughly doubles the heartbeat load on Redis.</li>
