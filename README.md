@@ -14,10 +14,18 @@ at Messenger / WhatsApp scale.
   `design.md`. Single file, no backend. Not the protocol prototype: that is the Node.js server in design §Prototype.
 - [`docs/design.md`](docs/design.md) — decisions so far (heartbeat and reconnect, history pagination),
   and [`docs/diagrams/high-level.html`](docs/diagrams/high-level.html), the interactive architecture diagram.
+- [`docs/diagrams/flows.md`](docs/diagrams/flows.md) — Mermaid sequence diagrams for the nine flows of
+  specification §4.2; open decisions appear as notes, never as arrows.
 - [`docs/specification.md`](docs/specification.md) — the brief: requirements, scale, the
   decisions the design must make, evaluation rubric, follow-up extensions.
 - [`docs/estimation.md`](docs/estimation.md) — the numbers, derived, and which decisions they changed.
-- `docs/tradeoffs.md` — not yet written (see §6 of the specification).
+- [`docs/tradeoffs.md`](docs/tradeoffs.md) — every specification §5 bullet as *chosen / rejected / why*, with the
+  open ones listed first.
+- [`docs/rubric.md`](docs/rubric.md) — the specification §7 rubric run: six pass, three fail, and the decision
+  list (A3) that closes the fails.
+- [`prototype/`](prototype/) — **the protocol prototype**: a Node.js + TypeScript chat server with in-memory ports,
+  a scripted multi-device client, and the scenario suite that the runtime ADR defines as done. One process, no
+  auth, no persistence, no multi-server; `npm test` in `prototype/`.
 
 Companion to the other `vntech-*` systems talks:
 [vntech-load-balancer](https://github.com/spartan-trucle/vntech-load-balancer),

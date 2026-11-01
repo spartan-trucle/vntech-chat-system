@@ -189,7 +189,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   <div>
     <h1>Before we build anything, let's agree on what "a chat system" has to survive.</h1>
     <p class="lede">A design notebook, organised by component. Each component has the problem it solves, the numbers that constrain it, the decision, how it works, what was rejected, and a fold-out of how we argued it. Open questions are marked, and there are few left.</p>
-    <p>Source documents: <a href="specification.md">specification.md</a> (the brief), <a href="estimation.md">estimation.md</a> (the derivations), <a href="design.md">design.md</a> (the full write-ups), <a href="diagrams/high-level.html">the architecture diagram</a>, <a href="prototype/">the target, simulated</a> (a clickable client with a server trace).</p>
+    <p>Source documents: <a href="specification.md">specification.md</a> (the brief), <a href="estimation.md">estimation.md</a> (the derivations), <a href="design.md">design.md</a> (the full write-ups), <a href="diagrams/high-level.html">the architecture diagram</a>, <a href="diagrams/flows.md">diagrams/flows.md</a> (sequence diagrams for the nine flows), <a href="tradeoffs.md">tradeoffs.md</a> (chosen / rejected / why per spec §5 bullet), <a href="rubric.md">rubric.md</a> (the spec §7 run), <a href="prototype/">the target, simulated</a> (a clickable client with a server trace).</p>
   </div>
   <div class="phone" aria-label="Example conversation illustrating the flows the design must handle">
     <div class="bar"><div class="avatar">K</div><div><div style="font-weight:500">Khanh</div><div class="presence">online</div></div></div>
@@ -708,7 +708,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <li><strong>Service discovery.</strong> Components 1 and 6 depend on it (least-loaded server, mark-all-offline on node loss). The book says ZooKeeper; today that reads as etcd, Consul, or the orchestrator.</li>
     <li><strong>The 10 % media rate.</strong> Component 7. The remaining lever on the dominant cost; halving it halves media.</li>
     <li><strong>Discord-style communities.</strong> Groups of 10 k+ change fan-out (on read), presence (a member list is a "who is online" screen), and the message store partitioning. A separate design pass, spec §8.3.</li>
-    <li><strong>The prototype plan</strong> in <code>.planning/plans/</code>, and <code>docs/tradeoffs.md</code> in the spec's chosen / rejected / why format, mostly extractable from the "Rejected" tables above.</li>
+    <li><strong>The A3 decision list</strong> lives in <a href="rubric.md">rubric.md</a>: the spec §7 run scores six rows pass and three fail, and its last table names the six decisions that close the fails (service discovery, reply quoting, store-primary failure, backpressure in <code>design.md</code>, the five paging metrics, N2 and N6). <a href="tradeoffs.md">tradeoffs.md</a> lists the same open bullets at its top. The prototype plans are in <code>.planning/plans/</code> and the code under <code>prototype/</code>.</li>
   </ol>
 </section>
 
