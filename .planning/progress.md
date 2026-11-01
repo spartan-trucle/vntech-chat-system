@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 10 (wave 2 merged to main 83c4e88; B3 in flight; A3 started with service discovery)
+Last updated: 2026-11-01, report round 11 (B3 on lane 5dee696 + core fix 27365ec, handed to C; B8 in flight; A3 service discovery under debate)
 
 ## Epics
 
@@ -21,10 +21,10 @@ Last updated: 2026-11-01, report round 10 (wave 2 merged to main 83c4e88; B3 in 
 | B5 receipts + unread | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ be877df | 166 passed (lane), typecheck clean | B5's status test fixture predated the sha256 column added by the B7 fix; one-line fixture fix after merge | none |
 | B6 presence | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ b637832 | 221 passed (lane), 140 alone | five assertions in three B0/B1 tests amended (lease interval exists while online; `watch` now answered); core unhandled-frame path has no probe left | none |
 | B7 media stub | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ d7ea3ea | 133 passed (lane) | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
-| B3 sync queue replay | B | 3 | in_progress (subagent, own worktree, on top of B4) | claude/b-prototype-297ab9 | | | |
-| B8 scenario suite | B | 4 | todo | feature/B-prototype | | | |
+| B3 sync queue replay | B | 3 | done on lane (5dee696 + core fix 27365ec), in review (C) | claude/b-prototype-297ab9 @ 27365ec | 242 passed (lane, 3 runs), 212 alone | core defect: per-connection frame chain held acks behind hello during replay; fixed in core. Client acks on a heuristic (batch size or 20 ms gap) since nothing on the wire marks batch end | none |
+| B8 scenario suite | B | 4 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B9 real Redis | B | 5 (optional) | todo | | | | |
-| C1 integrate (per epic) | C | continuous | waiting (10 epics merged) | main @ 83c4e88 | 221 passed + typecheck on merged tree | none | none |
+| C1 integrate (per epic) | C | continuous | reviewing B3 (range b637832..27365ec) | main @ 83c4e88 | | | |
 | C2 retrospective | C | 4 | todo | main | n/a | | |
 
 ## Merged to main
@@ -48,6 +48,10 @@ Last updated: 2026-11-01, report round 10 (wave 2 merged to main 83c4e88; B3 in 
 | B (orchestration) | Agent-tool worktrees are cut from `origin/main`, not the lane branch; every subagent brief must open with a fast-forward onto the lane branch |
 | B6 | `last_seen` is the last-pong time, not the debounce-fire time; the lease timer is armed only while someone is online; a `watch` during pending-offline is answered online and still receives the offline event, so 500 ms client batching can shift but never lose a transition |
 | B6 | earlier tests pinned the empty presence slot; once every client frame has an owner, the core's unhandled-frame path is unprobed (B8 or C2 should add a probe with an unknown frame type) |
+| B3 | the core handled each connection's frames strictly in order and `hello` awaited the replay, so an `ack` sent during replay could never be handled: a deadlock the design's §4.4 sequence does not show. Fixed by emitting `device_connected` beside the chain |
+| B3 | ack-only cursor advance (design §4.7) leaves the client acking on a heuristic (batch size or a 20 ms gap) because no frame marks a batch end; the design should name a batch-end marker or an explicit replay_done frame |
+| B3 | with real Redis the "empty XRANGE then switch to live" step needs one more XRANGE after the switch to close the race (for B9) |
+| B1 | S1 round-trip test is flaky under full-suite load (1 in ~8), mixes fake and real time; left for B8 |
 | B7 | the roadmap's `msg` frame omitted `media_size`, `media_mime`, `sha256` from design §6.2; the prototype followed the roadmap and left the row's media columns null. Lesson for the retrospective: the roadmap must quote the design's frame, not paraphrase it |
 
 ## Decisions for the author (A3 queue)
