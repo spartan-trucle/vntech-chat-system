@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 3 (wave 1 merged on the B lane branch, handed to C; wave 2 in flight; A3 waiting on the author)
+Last updated: 2026-11-01, report round 4 (wave 1 merged to main; wave 2 in flight; A3 waiting on the author)
 
 ## Epics
 
@@ -15,8 +15,8 @@ Last updated: 2026-11-01, report round 3 (wave 1 merged on the B lane branch, ha
 | A3 open decisions | hub + author | 2 | blocked on author | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
 | B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
-| B1 heartbeat + reconnect | B | 1 | done, in review (C) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
-| B2 send path, store, dedup | B | 1 | done, in review (C) | claude/b-prototype-297ab9 @ 4c293da | 111 passed (lane), 93 alone | push pending has tick granularity, the per-destination bound must leave room for one tick's fan-out; loopback only backs up after ~0.5 MB so the backpressure test corks the socket | none |
+| B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
+| B2 send path, store, dedup | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 4c293da | 111 passed (lane), 93 alone | push pending has tick granularity, the per-destination bound must leave room for one tick's fan-out; loopback only backs up after ~0.5 MB so the backpressure test corks the socket | none |
 | B4 history + summary (slow path) | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B5 receipts + unread | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B6 presence | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
@@ -24,7 +24,7 @@ Last updated: 2026-11-01, report round 3 (wave 1 merged on the B lane branch, ha
 | B3 sync queue replay | B | 3 | todo | feature/B-prototype | | | |
 | B8 scenario suite | B | 4 | todo | feature/B-prototype | | | |
 | B9 real Redis | B | 5 (optional) | todo | | | | |
-| C1 integrate (per epic) | C | continuous | reviewing B1+B2 (range 3820d58..8accc6e) | main @ e4b9a80 | | | |
+| C1 integrate (per epic) | C | continuous | waiting (6 epics merged) | main @ 6a81830 | 111 passed + typecheck on merged tree | none | none |
 | C2 retrospective | C | 4 | todo | main | n/a | | |
 
 ## Merged to main
@@ -33,6 +33,7 @@ Last updated: 2026-11-01, report round 3 (wave 1 merged on the B lane branch, ha
 |---|---|---|
 | A1, A2, A4 | ec786e5 (closing tasks e4b9a80) | 2026-11-01 |
 | B0 | 3820d58 (closing tasks e4b9a80) | 2026-11-01 |
+| B1, B2 | 6a81830 (no notebook changes needed) | 2026-11-01 |
 
 ## Surprises collected for C2
 
