@@ -486,6 +486,8 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <dd>The device's sync cursor is owned by the <em>device</em> and sent on every connect; the server never stores it, so there is no second copy to disagree with. The user's read cursor is owned by the server because other people read it; it lives in Cassandra with Redis as a cache. Kafka is not a cursor store at all: its offsets name positions in Kafka, not message IDs in our store.</dd>
       <dt>The one rule for loss</dt>
       <dd>Losing a cursor must make the system replay <em>more</em>, never less. Over-replay is harmless because the client dedups by message ID; under-replay loses messages silently. A wiped device is a new device (slow path). A lost Redis cache is one slower round trip to Cassandra. A cursor advances only after the device acks, never when the server has merely sent.</dd>
+      <dt>Write order, so that loss is only ever more reads</dt>
+      <dd>Message store first, sender ack second, queue append third. Nothing is in Redis that is not already in Cassandra, and the stream holds IDs only. Truc's framing is the right one: the queue is not a core feature, so losing it means loading more from persistent storage, never losing a message. The reverse order would make "sent" a lie when Redis dies.</dd>
       <dt>The failure that must be designed for</dt>
       <dd>Losing a Redis shard with its replica sends every device on it to the slow path on the next reconnect. The slow path is rate-limited per chat server so that is a latency event, not a message-store outage.</dd>
     </dl>

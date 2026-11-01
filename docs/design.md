@@ -417,6 +417,13 @@ The queue is written on the fan-out path, after the message store write and in t
 retry loop, so a message that is stored is eventually in every recipient device's stream.
 `XADD` with a client-chosen ID derived from the Snowflake makes retries idempotent.
 
+**Write order is an invariant: message store first, sender ack second, queue append
+third.** Nothing is ever in Redis that is not already in Cassandra, and the stream holds
+IDs only. Losing Redis therefore loses no message, only the map of what each device
+still lacks; the price is more reads from the persistent store, never a lost or lying
+"sent". The reverse order (Redis first, persist later) would make the sender's ack a lie
+whenever Redis dies, and is forbidden.
+
 **The queue is a fast path, not a source of truth.** A device offline longer than 24 h
 finds its stream trimmed past its cursor and takes the slow path: conversation summary
 (§4.3), then each chat loads from the message store on open. Nothing is lost; the device
