@@ -219,6 +219,8 @@ export interface ServerContext {
   readonly events: EventBus;
   readonly http: HttpRouter;
   readonly trace: Trace;
+  /** Per-module options keyed by module name (`connection`, `messaging`, …); tests tune intervals here. */
+  readonly moduleOptions: Readonly<Record<string, unknown>>;
   /** Register a handler for a client frame type; several may share a type and run in order. */
   onFrame<T extends ClientFrameType>(t: T, handler: FrameHandler<T>): void;
   /** Write one frame; false if the socket is gone (the message then belongs to the queue). */
@@ -238,6 +240,8 @@ export interface ChatServerOptions {
   seed?: boolean;
   /** Snowflake worker id; one server, so 0 unless a test needs two generators. */
   worker?: number;
+  /** Per-module options, e.g. `{ connection: { pingMs: 50 } }`; each module reads only its own key. */
+  moduleOptions?: Record<string, unknown>;
 }
 
 export interface ChatServer {
@@ -430,6 +434,7 @@ export async function createChatServer(opts: ChatServerOptions = {}): Promise<Ch
     events,
     http,
     trace,
+    moduleOptions: { ...(opts.moduleOptions ?? {}) },
     onFrame: (t, handler) => {
       const list = frameHandlers.get(t) ?? [];
       list.push(handler as unknown as FrameHandler<ClientFrameType>);

@@ -213,6 +213,16 @@ describe('chat server core (composition root)', () => {
     expect(server.ctx.trace.format()[0]).toMatch(/^\d\d:\d\d:\d\d {2}\w+ +.+$/);
   });
 
+  test('module options reach the context so a module can read its intervals without touching server.ts', async () => {
+    const tuned = await createChatServer({ port: 0, moduleOptions: { connection: { pingMs: 50 } } });
+    try {
+      expect(tuned.ctx.moduleOptions['connection']).toEqual({ pingMs: 50 });
+      expect(server.ctx.moduleOptions).toEqual({});
+    } finally {
+      await tuned.close();
+    }
+  });
+
   test('seeded fixtures: the three conversations of the clickable prototype exist', async () => {
     const seeded = await createChatServer({ port: 0, serverId: 'srv-2', seed: true });
     try {
