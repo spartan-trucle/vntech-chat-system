@@ -627,6 +627,92 @@ the sense that a `pending-offline → online` cancel emits nothing.
 
 ---
 
+## 6. Media: the server never touches the bytes
+
+### 6.1 Decision
+
+F9's "full size" protects **simplicity, not fidelity** (decided 2026-11-01): there is no
+server-side media pipeline because a transcoding system is a system of its own, with
+queues, workers and failure modes that are not the subject of this design. Consequences:
+
+- **Bytes go client ↔ object storage directly.** Chat servers and API servers handle
+  only metadata and signed URLs. No media byte ever crosses the real-time fleet.
+- **Compression is the client's job.** Images are compressed on the device by default
+  (target ≤ 500 KB); the sender may choose "send original". Video and files go as-is
+  under the cap. This is allowed because the requirement forbids server processing,
+  not client processing, and it cuts the dominant cost four times (estimation §3.2).
+- **The 10 MB cap is enforced by the storage, not by us.** The pre-signed upload URL
+  carries a content-length condition; the bucket rejects anything larger before a byte
+  is stored.
+
+### 6.2 Upload
+
+```
+client                     API server                object storage
+  |-- POST /media/intent ----->|                            |
+  |   {size, mime, sha256}     |-- validate size ≤ 10 MB    |
+  |<-- {media_key, put_url} ---|   mint pre-signed PUT      |
+  |                            |   (10 min, content-length = size, content-type = mime)
+  |-- PUT bytes --------------------------------------------->|
+  |<-- 200 ------------------------------------------------- |
+  |-- send message over WebSocket {body, media_key, size, mime, sha256}
+```
+
+- The message is sent **after** the upload completes; the recipient never sees a message
+  whose media does not exist yet. The client shows the outgoing bubble with a progress
+  bar in the meantime, from its outbox.
+- `media_key` is `{region}/{yyyy}/{mm}/{uuid}`; the object is immutable. A deleted
+  message leaves the object to expire by lifecycle rule rather than deleting
+  synchronously.
+- The `sha256` lets the client skip re-upload of a file it already sent (forward the
+  same object) and lets the recipient verify what it downloaded.
+
+### 6.3 Download
+
+```
+recipient                  API server                CDN / object storage
+  |-- GET /media/{key}/url --->|                            |
+  |                            |-- check membership of the message's conversation
+  |<-- {get_url, expires} -----|   signed, 1 h
+  |-- GET bytes --------------------------------------------->|
+```
+
+- Authorization is at URL minting time, against conversation membership. The URL itself
+  is a bearer token with a 1 h life; a forwarded URL works for an hour, which is
+  accepted (the alternative, proxying bytes through our servers, is exactly what the
+  design forbids).
+- Media bytes are fetched on demand when the bubble scrolls into view, never pushed.
+
+### 6.4 Regional buckets, CDN for group media only
+
+Estimation §3.2 at the revised numbers: 100 TB/day uploaded, ~500 TB/day downloaded.
+
+- **Buckets are regional.** The upload URL points at the bucket in the sender's region;
+  the key records the region. Most conversations are intra-region, so most downloads
+  are regional too, and replication across regions is not needed for correctness, only
+  for latency if a product wants it later.
+- **CDN only in front of group media.** A 1:1 attachment is downloaded roughly once per
+  recipient device (1.5×); a CDN edge adds a hop and a cache miss for nothing. A group
+  attachment is downloaded up to 150 times in a burst right after send; that is the
+  cache hit pattern a CDN exists for, and it is what keeps the origin bucket's request
+  rate flat. The minting step picks the URL host by conversation type.
+- **Lifecycle tiering.** Objects move to a colder storage class after 90 days and to
+  archive after a year. Download latency for old media rises; the signed-URL path does
+  not change.
+
+### 6.5 Rejected alternatives
+
+| Alternative | Why not |
+|-------------|---------|
+| Upload through the API servers | Every byte crosses our fleet twice; the only thing gained is a central place to enforce the cap, which the pre-signed URL already does. |
+| Server-side thumbnails / transcoding | A pipeline of its own; explicitly out of scope by F9. Clients render their own thumbnails from the downloaded file. |
+| Originals by default | 2 MB average → 400 TB/day; four times the cost for a fidelity nobody asked for in a chat. |
+| CDN in front of everything | Pays a hop and a miss on every 1:1 download, the majority of traffic. |
+| Proxy downloads for authorization | Reintroduces bytes through our servers to avoid a 1 h bearer URL; the trade is not worth it. |
+| Global bucket | Cross-region writes for intra-region chats, higher latency, no correctness gain. |
+
+---
+
 ## Open on the board after this section
 
 - Production runtime — deliberately undecided; the prototype is Node.js (ADR above).

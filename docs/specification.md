@@ -31,7 +31,7 @@ extensible to the follow-up questions in §8.
 | F6 | Multi-device support: one user may be logged in on several devices at once; all devices see the same conversation state |
 | F7 | **Online indicator (must have):** every open conversation and the visible part of the chat list show whether the other party is online, offline, or last seen at a time. Presence is delivered only to users who are currently looking at that person (subscription), not to a whole contact list. A state change is **detected within 10 s** and **visible to watchers within 15 s** in the normal case, 30 s worst case; a drop-and-reconnect shorter than 5 s is never shown as offline |
 | F8 | Message status: sent → delivered → read, **tracked per member** in group chats (the sender can see who has read, not only how many) |
-| F9 | **Media messages:** images, video and files up to **10 MB** per attachment, stored and delivered **at full size** (no resizing or transcoding on the server). One attachment per message. Recipients see the message immediately and fetch the media on demand |
+| F9 | **Media messages:** images, video and files up to **10 MB** per attachment. **The server never processes media bytes**: no resizing, transcoding or scanning pipeline; this is a simplicity requirement, not a fidelity one. The client may compress before upload (images are compressed by default; the sender can choose to send the original). One attachment per message. Recipients see the message immediately and fetch the media on demand |
 | F11 | **Auto-reconnect:** a client that loses connectivity reconnects on its own as soon as the network is back, without user action, and resumes from where it left off with no gap and no duplicates |
 | F10 | **Reply to a message:** a message can reference one earlier message in the same conversation (quoted reply, WhatsApp style). The client renders the quoted excerpt; if the parent was deleted, the reply still shows with a "message unavailable" placeholder. Slack-style threads remain out of scope |
 
@@ -75,7 +75,7 @@ seem off, but state the alternative you are using.
 | Group size | median 5, max 100 |
 | Chat history retention | forever (5-year figure used for sizing) |
 | Messages carrying media | 10 % of messages |
-| Average media size | 2 MB (cap 10 MB) |
+| Average media size | 500 KB after client-side compression (cap 10 MB; 2 MB if originals were the default) |
 
 Derive, and write down:
 

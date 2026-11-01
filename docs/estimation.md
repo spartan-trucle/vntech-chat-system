@@ -15,7 +15,7 @@ decision; the last section says which ones did. Round numbers on purpose.
 | Devices per user | 1.5 avg, 5 max | spec |
 | Message text + metadata | 200 B | spec |
 | Messages carrying media | 10 % | spec |
-| Media size | 2 MB avg, 10 MB cap | spec |
+| Media size | 500 KB avg after client compression, 10 MB cap | spec (revised; was 2 MB) |
 | Group size | median 5, max 100 | spec |
 | Traffic mix | 60 % of messages in 1:1 chats, 40 % in groups averaging 8 members | **assumed here**; the spec gives only the median group size |
 | Conversations per user | 50 total, 10 active in any month | **assumed here** |
@@ -121,22 +121,22 @@ not optional, partitions older than a year belong on cheaper disks.
 
 ```
 media/day               = 2.0 B × 10 %                      = 200 M objects
-bytes/day               = 200 M × 2 MB                      = 400 TB
-per year                = 146 PB
-5 years                 = 730 PB
+bytes/day               = 200 M × 500 KB                    = 100 TB
+per year                = 36 PB
+5 years                 = 180 PB
 ```
 
-**A thousand times the text volume.** The media store is the largest system in this
-design by a wide margin, and the object storage bill dwarfs everything else combined.
-Two things to challenge before accepting this: the 2 MB average (WhatsApp compresses
-images to ~100 KB; the spec forbids that, so the number stands unless the spec changes),
-and the 10 % media rate. Either one halving halves the dominant cost.
+Still **250 times the text volume**; the media store remains the largest system in the
+design. An earlier draft used 2 MB average because the spec said "full size"; the spec
+was clarified to mean "the server never processes bytes", which permits client-side
+compression, and that one clarification cut the dominant cost four times (design §6).
+The remaining lever is the 10 % media rate.
 
 Media bandwidth:
 
 ```
-upload   avg            = 400 TB / 86 400 s                 ≈ 4.6 GB/s, peak ≈ 23 GB/s
-download avg            = 400 TB × ~5 fetching devices      ≈ 2 PB/day ≈ 23 GB/s, peak ≈ 115 GB/s
+upload   avg            = 100 TB / 86 400 s                 ≈ 1.2 GB/s, peak ≈ 6 GB/s
+download avg            = 100 TB × ~5 fetching devices      ≈ 500 TB/day ≈ 6 GB/s, peak ≈ 30 GB/s
 ```
 
 The download number settles the CDN question for groups: a 10 MB video to 150 devices is
@@ -191,5 +191,5 @@ summaries.
 | Sync queue writes at 700 k/s peak, 54 TB live, time-bounded | the backing-store argument now has its input; Cassandra-with-TTL is at risk from tombstones |
 | Presence lease was 500 k Redis writes/s only because it was coupled to detection | decoupled: lease every 2 min (125 k/s), detection stays local, F7 keeps 10 s; presence delivered by subscription, not to all contacts (design §5) |
 | Message store is storage-bound 30:1 | compression and tiering move from "nice to have" to required |
-| Media is 1000× text and 23 GB/s download average | regional buckets, CDN for group media only; the 2 MB average is the single most expensive assumption in the spec |
+| Media was 1000× text at a 2 MB average | the spec's "full size" was clarified to mean "server never touches bytes"; client compression by default makes it 250× and cuts the dominant cost four times. Regional buckets with a CDN for group media (design §6) |
 | Conversation summaries do not all fit in Redis | design §4.3: Redis for 30-day-active conversations, store for the rest |
