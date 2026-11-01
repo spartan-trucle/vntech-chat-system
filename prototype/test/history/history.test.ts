@@ -227,4 +227,88 @@ describe('B4 history page API, summary row and slow path (design §2.3, §4.3, �
       expect(order).toEqual(['summary', 'ack']);
     });
   });
+
+  describe('GET /conversations?since&limit (design §4.3: the chat list from the summary rows)', () => {
+    interface ListRow {
+      conversation_id: string; last_message_id: MessageId; last_preview: string; last_sender: string; last_at: number;
+      my_read_cursor: MessageId | null; unread_count: number; unread_capped: boolean;
+    }
+    interface List { conversations: ListRow[]; list_cursor: number }
+
+    test('rows come from the summaries ordered by last activity; conversations never written to are omitted; since returns only changed rows', async () => {
+      let now = Date.UTC(2026, 10, 1, 8);
+      const srv = await start({ clock: { now: () => now } });
+      const khanh = await connect(DEVICES.khanhPhone);
+      const linh = await connect(DEVICES.linhBot);
+      const inC1 = await sendMsg(khanh, 'c1', 'dm from khanh');
+      now += 1000;
+      const inC3 = await sendMsg(linh, 'c3', 'dm from linh');
+      now += 1000;
+      const inC2 = await sendMsg(khanh, 'c2', 'group chatter');
+      // c2 and c3 are newer than c1; nobody wrote to any other conversation.
+
+      const full = await get<List>('/conversations?user_id=truc&device_id=A2');
+      expect(full.status).toBe(200);
+      expect(full.body.conversations.map((r) => r.conversation_id)).toEqual(['c2', 'c3', 'c1']);
+      expect(full.body.conversations[2]).toEqual({
+        conversation_id: 'c1', last_message_id: inC1, last_preview: 'dm from khanh', last_sender: 'khanh', last_at: Date.UTC(2026, 10, 1, 8),
+        my_read_cursor: null, unread_count: 1, unread_capped: false,
+      });
+      expect(full.body.conversations[0]).toMatchObject({ conversation_id: 'c2', last_message_id: inC2 });
+      expect(full.body.list_cursor).toBe(Date.UTC(2026, 10, 1, 8) + 2000);
+
+      // Khanh is not in c3: two rows, and neither is c3.
+      const khanhList = await get<List>('/conversations?user_id=khanh');
+      expect(khanhList.body.conversations.map((r) => r.conversation_id)).toEqual(['c2', 'c1']);
+
+      // Incremental: only rows that changed after the device's list cursor.
+      const since = await get<List>(`/conversations?user_id=truc&since=${Date.UTC(2026, 10, 1, 8)}`);
+      expect(since.body.conversations.map((r) => r.conversation_id)).toEqual(['c2', 'c3']);
+      expect(since.body.conversations[1]).toMatchObject({ last_message_id: inC3 });
+      const nothing = await get<List>(`/conversations?user_id=truc&since=${full.body.list_cursor}`);
+      expect(nothing.body).toEqual({ conversations: [], list_cursor: full.body.list_cursor });
+
+      const limited = await get<List>('/conversations?user_id=truc&limit=1');
+      expect(limited.body.conversations.map((r) => r.conversation_id)).toEqual(['c2']);
+      expect(srv.ctx.trace.rows().some((r) => r.tag === 'http' && r.text === 'GET /conversations?since=0 ← Truc·laptop')).toBe(true);
+      expect(srv.ctx.trace.rows().some((r) => r.tag === 'http' && r.text === `GET /conversations?since=${Date.UTC(2026, 10, 1, 8)} ← Truc`)).toBe(true);
+    });
+
+    test('unread_count is the bounded count above the read cursor, capped at 99 with unread_capped', async () => {
+      const srv = await start();
+      const khanh = await connect(DEVICES.khanhPhone);
+      const ids: MessageId[] = [];
+      for (let i = 1; i <= 3; i += 1) ids.push(await sendMsg(khanh, 'c1', `m${i}`));
+
+      const unread = (await get<List>('/conversations?user_id=truc')).body.conversations[0]!;
+      expect(unread).toMatchObject({ conversation_id: 'c1', my_read_cursor: null, unread_count: 3, unread_capped: false });
+
+      await srv.ctx.ports.cursors.advanceRead('c1', 'truc', ids[1]!);
+      const partly = (await get<List>('/conversations?user_id=truc')).body.conversations[0]!;
+      expect(partly).toMatchObject({ my_read_cursor: ids[1], unread_count: 1, unread_capped: false });
+
+      await srv.ctx.ports.cursors.advanceRead('c1', 'truc', ids[2]!);
+      const read = (await get<List>('/conversations?user_id=truc')).body.conversations[0]!;
+      expect(read).toMatchObject({ my_read_cursor: ids[2], unread_count: 0, unread_capped: false });
+
+      for (let i = 0; i < 120; i += 1) {
+        const message_id = srv.ctx.ids.next();
+        await srv.ctx.ports.messages.insert({
+          conversation_id: 'c1', bucket: bucketOf(message_id), message_id, sender_id: 'khanh', client_msg_id: `bulk-${i}`,
+          body: `bulk ${i}`, reply_to: null, media_key: null, media_size: null, media_mime: null, created_at: srv.ctx.clock.now(),
+        });
+        await srv.ctx.events.emit('message_stored', { message: (await srv.ctx.ports.messages.get('c1', message_id))!, sender: srv.ctx.connections.byDevice('B1')! });
+      }
+      const capped = (await get<List>('/conversations?user_id=truc')).body.conversations[0]!;
+      expect(capped).toMatchObject({ unread_count: 99, unread_capped: true });
+    });
+
+    test('400 without user_id or with a malformed since or limit', async () => {
+      await start();
+      expect(await get('/conversations')).toEqual({ status: 400, body: { error: 'missing_user_id' } });
+      expect(await get('/conversations?user_id=truc&since=yesterday')).toEqual({ status: 400, body: { error: 'bad_since' } });
+      expect(await get('/conversations?user_id=truc&limit=0')).toEqual({ status: 400, body: { error: 'bad_limit' } });
+      expect(await get('/conversations?user_id=truc&limit=201')).toEqual({ status: 400, body: { error: 'bad_limit' } });
+    });
+  });
 });
