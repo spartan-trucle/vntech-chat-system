@@ -122,8 +122,8 @@ section{padding:48px 0;border-top:1px solid var(--line)}
 .arg .side > div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:.93rem}
 .arg .side .lbl{display:block;font-size:.78rem;color:var(--ink-2);margin-bottom:4px}
 .arg .side .for{border-top:3px solid var(--decided)} .arg .side .against{border-top:3px solid var(--open)}
-.arg .verdict{border-left:3px solid var(--decided);padding:6px 14px;background:var(--decided-bg);border-radius:0 8px 8px 0;font-size:.95rem}
-.arg.open .verdict{border-color:var(--open);background:var(--open-bg)}
+.arg .ruling{border-left:3px solid var(--decided);padding:6px 14px;background:var(--decided-bg);border-radius:0 8px 8px 0;font-size:.95rem}
+.arg.open .ruling{border-color:var(--open);background:var(--open-bg)}
 .arg dl{margin:0 0 .8em;font-size:.95rem}
 .arg dt{font-weight:600;margin-top:10px}
 .arg dd{margin:2px 0 0}
@@ -377,7 +377,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <div class="for"><span class="lbl">Why canonical</span>This is practice. The point is to learn why chat systems look the way they do, and the textbook is the distilled version of WhatsApp, Messenger and Discord. Picking the familiar stack would be picking the lesson we skip.</div>
       <div class="against"><span class="lbl">Why "what we'd run"</span>A Kotlin and Postgres system we can operate at 3 a.m. beats a Cassandra cluster we misconfigure. Practice that does not transfer to work is entertainment.</div>
     </div>
-    <p class="verdict"><strong>Decided: canonical.</strong> This closed four layers at once: WebSocket transport, wide-column store, Snowflake IDs, direct push with a sync queue. It did <em>not</em> close the programming language, because the book never names one.</p>
+    <p class="ruling"><strong>Decided: canonical.</strong> This closed four layers at once: WebSocket transport, wide-column store, Snowflake IDs, direct push with a sync queue. It did <em>not</em> close the programming language, because the book never names one.</p>
   </article>
 
   <article class="arg">
@@ -395,7 +395,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <dt>Multiple chat servers: do we need sticky sessions?</dt>
       <dd>Yes, but not in the load-balancer sense. A WebSocket is one TCP connection, so it is stuck to one server by nature; the balancer only picks a server at connect time. What we need is the <em>inverse</em> lookup: when a message arrives for Khanh, which server holds Khanh's three connections? That is the Redis routing table, <code>route:{user}:{device} → server</code>. Sticky by connection, stateless on the API layer, shared routing map for cross-server delivery. The thing we must <em>not</em> do is pin a user to a server across reconnects, because that turns one node's crash into a permanent outage for its users.</dd>
     </dl>
-    <p class="verdict"><strong>Decided:</strong> wide-column store, partition key (conversation, month bucket), clustering by Snowflake ID descending. The "nobody here has run Cassandra in anger" risk is real and parked under the canonical frame.</p>
+    <p class="ruling"><strong>Decided:</strong> wide-column store, partition key (conversation, month bucket), clustering by Snowflake ID descending. The "nobody here has run Cassandra in anger" risk is real and parked under the canonical frame.</p>
   </article>
 
   <article class="arg">
@@ -406,7 +406,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <div class="against"><span class="lbl">The cost, named</span>The 5 s interval exists only because F7 says presence changes must be visible within 10 s. Relaxing F7 to 30 s makes the ping 15 s and cuts fleet heartbeat traffic three times. This is the cheapest lever on the page and should be re-asked before launch.</div>
     </div>
     <p>The insight that makes the interval affordable: <strong>heartbeats never write to Redis.</strong> Pongs update a timestamp in the chat server's memory. Presence in Redis is a lease renewed once every 30 s per server in one pipelined batch, so a node with 100 k connections does 3.3 k key writes a second instead of 20 k. A crashed server's leases expire in 60 s; service discovery also watches server liveness and marks that server's users offline faster.</p>
-    <p class="verdict"><strong>Decided.</strong> Why server-initiated protocol pings: browsers cannot send ping frames but answer them for free, pong is handled below application backpressure, and the server owns the clock.</p>
+    <p class="ruling"><strong>Decided.</strong> Why server-initiated protocol pings: browsers cannot send ping frames but answer them for free, pong is handled below application backpressure, and the server owns the clock.</p>
   </article>
 
   <article class="arg">
@@ -422,7 +422,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <dt>Jump to a quoted parent outside the window</dt>
       <dd>Fetch by key, then page around it. Not a scroll-up loop.</dd>
     </dl>
-    <p class="verdict"><strong>Decided.</strong> Rejected: load full history on open (p50 impossible), offset paging, history over the socket, device-only history (fails new-device and lost-phone cases).</p>
+    <p class="ruling"><strong>Decided.</strong> Rejected: load full history on open (p50 impossible), offset paging, history over the socket, device-only history (fails new-device and lost-phone cases).</p>
   </article>
 
   <article class="arg">
@@ -433,7 +433,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <div class="against"><span class="lbl">What it costs</span>"Who has read" is a partition read plus a compare, not a stored list, so the UI does one small query when the sender opens the receipt sheet. Acceptable: nobody opens that sheet 100 times a second.</div>
     </div>
     <p>Unread is derived the same way: <code>last_message_id(conversation) &gt; last_read_id(conversation, user)</code>. One read cursor per <em>user</em>, not per device, is what makes reading on the phone clear the badge on the laptop. Notifications go only to devices without a live socket, carry a hint and never the body, and go to all offline devices of the user so the read-cursor push clears the rest.</p>
-    <p class="verdict"><strong>Decided.</strong> Rejected: receipt row per message per member, pushing receipts to everyone, per-device read cursors, pushing message bodies, a stored unread counter (hot key, drifts on retry).</p>
+    <p class="ruling"><strong>Decided.</strong> Rejected: receipt row per message per member, pushing receipts to everyone, per-device read cursors, pushing message bodies, a stored unread counter (hot key, drifts on retry).</p>
   </article>
 
   <article class="arg">
@@ -449,7 +449,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <dt>Backpressure, the counterpoint still on the board</dt>
       <dd>Direct push means one slow recipient server in a 100-member group can stall the sender's server. The fix is a bounded per-destination buffer with a drop-to-queue rule: if the recipient server does not take the push within budget, the message stays in that device's sync queue and the device catches up on its own. Backpressure becomes a delay for one recipient, not a stall for the sender.</dd>
     </dl>
-    <p class="verdict"><strong>Direction decided</strong> (direct push plus sync queue for catch-up). <strong>Open:</strong> what backs the queue, and whether it needs to exist at all. See argument 8.</p>
+    <p class="ruling"><strong>Direction decided</strong> (direct push plus sync queue for catch-up). <strong>Open:</strong> what backs the queue, and whether it needs to exist at all. See argument 8.</p>
   </article>
 
   <article class="arg open">
@@ -459,7 +459,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <div class="against"><span class="lbl">The challenge</span>Every decision so far shows up in an artifact: the store shapes the schema, the transport shapes the heartbeat protocol, the ID shapes the cursor. The runtime shapes none of them; all three candidates hold 100 k sockets per node. So: <strong>what will be different in this repository depending on the runtime?</strong> If the answer is "a line in design.md", the verdict is "revisit when there is code" and the hour goes to presence fan-out instead.</div>
       <div class="for"><span class="lbl">When it would matter</span>If the exercise ends in a prototype chat server to test the heartbeat design, the runtime matters a lot, and the argument becomes "which runtime teaches the most per week of practice", not "which is best for WhatsApp". Then BEAM is the strongest candidate precisely because it is the one nobody would pick at work.</div>
     </div>
-    <p class="verdict"><strong>Open.</strong> Waiting on: prototype, or design only?</p>
+    <p class="ruling"><strong>Open.</strong> Waiting on: prototype, or design only?</p>
   </article>
 
   <article class="arg open">
@@ -469,7 +469,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <div class="against"><span class="lbl">The challenge</span>After arguments 4 and 5 we already have: the message store ordered by ID per conversation, <code>conv:{id}:last</code> in Redis, and a cursor per device per conversation. "What did this device miss" can be answered by listing the user's conversations, comparing each one's last ID to the device cursor, and paging the store forward for the ones that are behind. The sync queue is a second write of every message times 150 devices in a full group, roughly 300 billion appends a day, into a structure that exists only to be trimmed. <strong>What does it give a reconnecting device that "compare cursors, then page the store" does not?</strong></div>
       <div class="for"><span class="lbl">The one defence so far</span>A user in 500 conversations makes the comparison itself expensive on every reconnect, and mobile reconnects are constant. If that is the case being protected, the argument is about the threshold where a queue beats a scan, not about which product backs the queue.</div>
     </div>
-    <p class="verdict"><strong>Open.</strong> If no queue survives this, the backing-store question disappears and the diagram loses a box.</p>
+    <p class="ruling"><strong>Open.</strong> If no queue survives this, the backing-store question disappears and the diagram loses a box.</p>
   </article>
 
   </div>
