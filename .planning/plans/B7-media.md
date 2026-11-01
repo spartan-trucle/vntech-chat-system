@@ -77,6 +77,10 @@ and `npm run typecheck`. The clock is injected (`clock: { now: () => fixed }`) w
 
 ## Found while building (input for C2)
 
+- Process: the GET route was written in the same commit as POST (be0adb2), so `url.test.ts` was never seen
+  red. Compensated with a mutation check (flipping cdn/bucket and disabling the membership check each fail
+  two tests); recorded here rather than staging a red after the fact.
+
 - Protocol gap: design §6.2 sends `{body, media_key, size, mime, sha256}` in the message, but `MsgFrame`
   carries `media_key` only, so the stored row's `media_size`/`media_mime` stay null (B2 writes the row). The
   intent table holds size and mime per key; C2 should either widen `MsgFrame` or let the media module fill
