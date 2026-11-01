@@ -8,7 +8,7 @@ import { DEVICES, type FixtureDevice } from '../../src/fixtures.js';
 
 const message = (over: Partial<Message> = {}): Message => ({
   conversation_id: 'c2', bucket: 202611, message_id: '100', sender_id: 'truc', client_msg_id: 'cid', body: 'x',
-  reply_to: null, media_key: null, media_size: null, media_mime: null, created_at: 0, ...over,
+  reply_to: null, media_key: null, media_size: null, media_mime: null, sha256: null, created_at: 0, ...over,
 });
 const dev = (device_id: string, user_id: string): DeviceRecord => ({ device_id, user_id, kind: 'phone' });
 
