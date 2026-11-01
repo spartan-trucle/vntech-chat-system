@@ -332,7 +332,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     </div>
     <div class="verdict">
       <div><span class="lbl">Lean</span><p>Direct push for online recipients; catch-up for everything else. Kafka left the hot path once the canonical frame was chosen. Backpressure answered: bounded per-destination buffer, drop to the device's catch-up path on timeout.</p></div>
-      <div class="against"><span class="lbl">Strongest case against</span><p>Does the per-device sync queue need to exist, when cursors plus the message store can already answer "what did I miss"? Argument 8 below.</p></div>
+      <div class="against"><span class="lbl">Counterpoint, answered</span><p>"Cursors plus the store can answer what did I miss." True for the chat list, which now has its own summary read; false for ordered replay across hundreds of conversations. Argument 8 below. Remaining: what backs the queue.</p></div>
     </div>
   </article>
 
@@ -462,14 +462,15 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <p class="ruling"><strong>Open.</strong> Waiting on: prototype, or design only?</p>
   </article>
 
-  <article class="arg open">
-    <h3>8. Does the sync queue need to exist?<span class="status o">open</span></h3>
+  <article class="arg">
+    <h3>8. Does the sync queue need to exist?<span class="status d">decided: keep it</span></h3>
     <p>Asked as "Cassandra, Redis Streams, or Kafka for the sync queue", answered with a prior question.</p>
     <div class="side">
       <div class="against"><span class="lbl">The challenge</span>After arguments 4 and 5 we already have: the message store ordered by ID per conversation, <code>conv:{id}:last</code> in Redis, and a cursor per device per conversation. "What did this device miss" can be answered by listing the user's conversations, comparing each one's last ID to the device cursor, and paging the store forward for the ones that are behind. The sync queue is a second write of every message times 150 devices in a full group, roughly 300 billion appends a day, into a structure that exists only to be trimmed. <strong>What does it give a reconnecting device that "compare cursors, then page the store" does not?</strong></div>
       <div class="for"><span class="lbl">The one defence so far</span>A user in 500 conversations makes the comparison itself expensive on every reconnect, and mobile reconnects are constant. If that is the case being protected, the argument is about the threshold where a queue beats a scan, not about which product backs the queue.</div>
     </div>
-    <p class="ruling"><strong>Open.</strong> If no queue survives this, the backing-store question disappears and the diagram loses a box.</p>
+    <p>Truc's answer settled it from the product side: on reconnect the chat list must show <em>which conversations have new messages</em> immediately, and open chats must then be complete. Those are two different reads. "Compare cursors, then page the store" is the right answer for the first one and the wrong answer for the second: rebuilding a week of messages across 200 conversations is 200 range scans stitched into one ordered stream on the client, which is exactly what the queue already is.</p>
+    <p class="ruling"><strong>Decided: keep the per-device sync queue</strong> (IDs only, ~50 bytes a row, 30-day TTL, replayed from the device cursor), and add a <strong>conversation summary</strong> read over HTTPS that renders the chat list with unread dots and previews before a single queued message has replayed. Sequence and bounds in <a href="design.md">design.md §4</a>. Still open: what backs the queue, once the write volume is estimated.</p>
   </article>
 
   </div>
@@ -489,7 +490,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <li><s>Does the server keep history forever, or is it a relay with device-side storage?</s> <strong>Answered: forever, server-side.</strong> The month-bucketed partitions in design.md §2 already assume this; retention becomes a tiering question only.</li>
     <li>For media: regional buckets or global CDN? Full-size delivery without variants makes the CDN case weaker than usual.</li>
     <li>Is the exercise going to produce a prototype chat server, or only the design? Decides whether the runtime question (argument 7) is worth an hour.</li>
-    <li>Does a reconnecting device need a sync queue, or is "compare cursors, then page the store" enough (argument 8)? If a queue survives, what backs it?</li>
+    <li><s>Does a reconnecting device need a sync queue, or is "compare cursors, then page the store" enough?</s> <strong>Answered: keep the queue</strong> for ordered replay, plus a conversation summary read for the chat list (argument 8). Open: what backs the queue, after the write volume is estimated.</li>
   </ol>
 </section>
 

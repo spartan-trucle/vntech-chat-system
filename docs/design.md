@@ -359,11 +359,128 @@ icon badge and the in-app list agree.
 
 ---
 
+## 4. Reconnect: the sync queue and the conversation list
+
+### 4.1 Decision
+
+**Keep the per-device sync queue.** On reconnect a device needs two different things,
+and they are served by two different reads:
+
+| Need | Shape of the answer | Served by |
+|------|---------------------|-----------|
+| "Show me my chat list, with which conversations have new messages, now" | one row per conversation: last message ID, preview, sender, unread count | **conversation summary** read (§4.3), one request, bounded by the number of conversations |
+| "Give me every message I missed, in order, so each open chat is complete" | a stream of messages, possibly thousands, in ID order | **sync queue** replay from the device cursor (§4.2) |
+
+The challenge in argument 8 ("compare cursors, then page the store") was really a
+description of the first read. It is correct for the chat list and wrong for the second
+need: paging the store forward across 200 conversations to rebuild a week of messages is
+200 range scans that must be stitched into one ordered stream on the client. The queue
+already is that stream.
+
+### 4.2 Sync queue, defined
+
+One append-only log per device:
+
+```
+sync_queue (
+  device_id    uuid,
+  bucket       int,        -- day; bounds partition size for a device offline for weeks
+  message_id   bigint,     -- Snowflake; global order across conversations
+  conversation_id uuid,
+  PRIMARY KEY ((device_id, bucket), message_id)
+) WITH default_time_to_live = 2592000;   -- 30 days, see §4.5
+```
+
+Operations, and nothing else:
+
+- **append** on every stored message, once per recipient device (150 appends for a full
+  group). Rows are IDs only; bodies are read from the message store on replay, so a
+  queue row is ~50 bytes.
+- **replay** from `last_synced_message_id`: read rows `> cursor` in order, join bodies
+  from the message store in batches of 100, push over the socket.
+- **ack**: the device advances `last_synced_message_id`; the server does not delete
+  rows, the TTL does. Advancing the cursor is the trim.
+
+The queue is written on the fan-out path, after the message store write and in the same
+retry loop, so a message that is stored is eventually in every recipient device's queue.
+The write is idempotent (same primary key), so retries are safe.
+
+### 4.3 Conversation summary on reconnect
+
+The chat list must render before the queue finishes draining, and it must say which
+conversations changed. Served by one HTTPS call, not the socket:
+
+```
+GET /conversations?since={list_cursor}&limit=200
+→ for each conversation the user is a member of, ordered by last activity desc:
+  { conversation_id, last_message_id, last_preview, last_sender, last_at,
+    unread_count, my_read_cursor }
+```
+
+Where the fields come from:
+
+- `last_message_id`, `last_preview`, `last_sender`, `last_at`: a per-conversation summary
+  row in Redis (`conv:{id}:summary`), updated on every write. 100 bytes per conversation,
+  one `MGET` for the user's membership list.
+- `unread_count`: `last_message_id > my_read_cursor` gives the dot; the count is a bounded
+  range count on the current month bucket of the message store, capped at 99+ (§3.5).
+- `since`: the device's `list_cursor` is the `last_at` of the newest row it has; the server
+  returns only conversations whose summary changed after that. On a short disconnect this
+  is a handful of rows; on a new device it is the full list, paged.
+
+So "which conversation has a new message" is answered by the summary, in one round trip,
+before a single queued message has been replayed. The device shows the list with unread
+dots and previews, then opens the socket and drains the queue in the background;
+each replayed message updates the already-visible row.
+
+### 4.4 Reconnect sequence
+
+```
+device                         API servers              chat server          stores
+  |-- GET /conversations?since --->|                                             |
+  |<-- summaries (dots, previews) -|                                             |
+  |  render list                   |                                             |
+  |-- WS connect + hello{cursor} ------------------------>|                      |
+  |                                                       |-- route register --> Redis
+  |                                                       |-- replay from cursor -> sync_queue + messages
+  |<-- missed messages, in order (batches of 100) --------|                      |
+  |-- ack per batch (advance cursor) -------------------->|                      |
+  |<-- live traffic begins ------------------------------|                      |
+```
+
+The list is usable after step 2. Open chats are complete after the replay. If the user
+opens a conversation before its messages have replayed, the client pages that
+conversation from the store directly (§2.3, history path) rather than waiting for the
+queue; the queue replay later dedups by message ID on the client.
+
+### 4.5 Bounds
+
+- **Queue size.** A device offline for 30 days with 100 active groups at 1 000 messages a
+  day each is 3 M rows, 150 MB. The daily bucket keeps any one partition at ~100 k rows.
+- **Expiry.** After 30 days without a replay the queue rows expire. A device returning
+  later is treated as new: it gets the conversation summary, and each chat loads from
+  the store on open. Nothing is lost; the queue was only the fast path.
+- **Write cost.** 2 B messages × ~75 recipient devices on average (groups median 5,
+  weighted by activity) is the number to estimate in `estimation.md`; it is the queue's
+  real price and the reason rows carry IDs, not bodies.
+
+### 4.6 Rejected alternatives
+
+| Alternative | Why not |
+|-------------|---------|
+| No queue: compare cursors and page the store per conversation | Right for the chat list, wrong for replay: N range scans stitched client-side, no single ordered stream, and a device in 200 conversations pays 200 reads on every reconnect. |
+| Queue rows carry message bodies | 2 KB × 75 devices per message instead of 50 B; bodies change on delete/edit and the queue would go stale. |
+| Derive the chat list from the queue replay | The list would appear only after the drain, which can be thousands of messages; the user stares at a spinner. |
+| One queue per user, not per device | Cannot express "phone is a week behind, laptop is current". |
+| Delete rows on ack instead of TTL | Tombstone storms in Cassandra; the cursor already makes acked rows invisible. |
+
+---
+
 ## Open on the board after this section
 
 - Runtime (Kotlin/Netty vs BEAM vs Go) — still the first unanswered question.
 - Presence fan-out: §1.5 decides how *offline* is detected; it does not decide how 10 M
   state changes reach friends' screens.
-- Fan-out and sync-queue backing: §3.4 and §3.6 assume the direct-push path; what durable
-  store backs the per-device sync queue is still open.
+- Sync-queue backing: §4.2 is written as a Cassandra table; Redis Streams or Kafka could
+  back the same operations. Decide once the write volume is in `estimation.md`.
 - Service discovery: §1.4 and §1.5 both depend on it; ZooKeeper vs etcd vs orchestrator.
