@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 11 (B3 on lane 5dee696 + core fix 27365ec, handed to C; B8 in flight; A3 service discovery under debate)
+Last updated: 2026-11-01, report round 12 (B3 merged to main 806a9ec; B8 in flight; A3 service discovery under debate)
 
 ## Epics
 
@@ -21,10 +21,10 @@ Last updated: 2026-11-01, report round 11 (B3 on lane 5dee696 + core fix 27365ec
 | B5 receipts + unread | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ be877df | 166 passed (lane), typecheck clean | B5's status test fixture predated the sha256 column added by the B7 fix; one-line fixture fix after merge | none |
 | B6 presence | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ b637832 | 221 passed (lane), 140 alone | five assertions in three B0/B1 tests amended (lease interval exists while online; `watch` now answered); core unhandled-frame path has no probe left | none |
 | B7 media stub | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ d7ea3ea | 133 passed (lane) | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
-| B3 sync queue replay | B | 3 | done on lane (5dee696 + core fix 27365ec), in review (C) | claude/b-prototype-297ab9 @ 27365ec | 242 passed (lane, 3 runs), 212 alone | core defect: per-connection frame chain held acks behind hello during replay; fixed in core. Client acks on a heuristic (batch size or 20 ms gap) since nothing on the wire marks batch end | none |
+| B3 sync queue replay | B | 3 | merged (806a9ec) | claude/b-prototype-297ab9 @ 27365ec | 242 passed (lane, 3 runs), 212 alone | core defect: per-connection frame chain held acks behind hello during replay; fixed in core. Client acks on a heuristic (batch size or 20 ms gap) since nothing on the wire marks batch end | none |
 | B8 scenario suite | B | 4 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B9 real Redis | B | 5 (optional) | todo | | | | |
-| C1 integrate (per epic) | C | continuous | reviewing B3 (range b637832..27365ec) | main @ 83c4e88 | | | |
+| C1 integrate (per epic) | C | continuous | waiting for B8 (11 epics merged) | main @ 806a9ec | 242 passed + typecheck, no flake in 3 runs | none | none |
 | C2 retrospective | C | 4 | todo | main | n/a | | |
 
 ## Merged to main
@@ -35,6 +35,7 @@ Last updated: 2026-11-01, report round 11 (B3 on lane 5dee696 + core fix 27365ec
 | B0 | 3820d58 (closing tasks e4b9a80) | 2026-11-01 |
 | B1, B2 | 6a81830 (no notebook changes needed) | 2026-11-01 |
 | B4, B5, B6, B7 | 83c4e88 (no notebook changes needed) | 2026-11-01 |
+| B3 | 806a9ec (no notebook changes needed) | 2026-11-01 |
 
 ## Surprises collected for C2
 
