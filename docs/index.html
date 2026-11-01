@@ -268,7 +268,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <tr><td><a href="#c-receipts">Receipts, unread, notifications</a></td><td>One read cursor per member per conversation; unread derived; push hint only, to devices without a socket</td><td><span class="state decided">decided</span></td></tr>
       <tr><td><a href="#c-presence">Presence</a></td><td>Detect locally in 10 s; deliver by subscription to who is looking; bounded propagation; cheap lease</td><td><span class="state decided">decided</span></td></tr>
       <tr><td><a href="#c-media">Media</a></td><td>Server never touches bytes; client compresses; regional buckets; CDN for group media only</td><td><span class="state decided">decided</span></td></tr>
-      <tr><td><a href="#c-runtime">Runtime and prototype</a></td><td>Node.js + TypeScript for the prototype; production runtime deliberately undecided</td><td><span class="state open">prototype decided, production open</span></td></tr>
+      <tr><td><a href="#c-runtime">Runtime and prototype</a></td><td>Node.js + TypeScript prototype under <code>prototype/</code>, built; its six scenarios S1–S6 pass (drop detection, replay from the cursor, dedup, list before replay, presence debounce, media metadata only); production runtime deliberately undecided</td><td><span class="state open">prototype done, production open</span></td></tr>
     </tbody>
   </table>
 </section>
@@ -683,12 +683,15 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       </div>
     </div>
     <div>
-      <h4>What the prototype must prove</h4>
+      <h4>What the prototype proves</h4>
+      <p>Built under <a href="https://github.com/spartan-trucle/vntech-chat-system/tree/main/prototype"><code>prototype/</code></a>: one Node.js process, in-memory ports, a scripted multi-device client. Six scripted scenarios run over the real server, on fake time with the design's numbers and (S1, S5) on real timers; all pass. What the build changed in the design is in <a href="#c-learned">What the prototype changed</a>.</p>
       <ol class="asks">
-        <li>An unclean drop is detected within 10 s, with the scripted client suppressing pongs and dropping sockets uncleanly.</li>
-        <li>Reconnect with a cursor replays exactly the missed messages, in order, with no duplicates.</li>
-        <li>A duplicate send is deduplicated by client message ID.</li>
-        <li>The chat list renders from the summary before the replay finishes.</li>
+        <li><strong>S1</strong> An unclean drop is detected by the server within 10 s and by the client on its own within 15 s; the reconnect carries the cursor and flushes the outbox with the same client message ID.</li>
+        <li><strong>S2</strong> Reconnect with a cursor replays exactly the missed messages, in order, with no duplicates, before live traffic; a cursor moved backwards re-delivers and the device dedups.</li>
+        <li><strong>S3</strong> A duplicate send is deduplicated by client message ID: one row, one queue entry, one deliver.</li>
+        <li><strong>S4</strong> The chat list renders from the summary before the replay finishes; a cold open during the replay reads the store.</li>
+        <li><strong>S5</strong> Presence by subscription: watch is batched and answered, a drop shows offline at ≈ t+15 s with last_seen=t, a reconnect inside the 5 s debounce shows nothing, pongs never write the lease.</li>
+        <li><strong>S6</strong> A media message carries the key and metadata only; no URL and no byte crosses a socket; an intent over 10 MB is refused before any byte moves.</li>
       </ol>
       <details class="argued"><summary>How we argued it</summary><div class="body">
         <p>Challenge: what will be different in this repository depending on the runtime? Truc: there will be a prototype; its goal is protocol correctness; the shortlist is Kotlin or Node.js; the criterion is speed. Node.js followed. ADR: <code>.memory/decisions/2026-11-01-prototype-runtime-nodejs.md</code>.</p>

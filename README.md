@@ -24,8 +24,10 @@ at Messenger / WhatsApp scale.
 - [`docs/rubric.md`](docs/rubric.md) — the specification §7 rubric run: six pass, three fail, and the decision
   list (A3) that closes the fails.
 - [`prototype/`](prototype/) — **the protocol prototype**: a Node.js + TypeScript chat server with in-memory ports,
-  a scripted multi-device client, and the scenario suite that the runtime ADR defines as done. One process, no
-  auth, no persistence, no multi-server; `npm test` in `prototype/`.
+  a scripted multi-device client, and the six scenarios the runtime ADR defines as done (S1 unclean drop, S2 replay
+  from the cursor, S3 dedup, S4 list before replay, S5 presence debounce, S6 media metadata only), all passing. One
+  process, no auth, no persistence, no multi-server. Run `npm test` and `npm run scenarios` in `prototype/`; the
+  scenario table is in [`prototype/README.md`](prototype/README.md).
 
 Companion to the other `vntech-*` systems talks:
 [vntech-load-balancer](https://github.com/spartan-trucle/vntech-load-balancer),
