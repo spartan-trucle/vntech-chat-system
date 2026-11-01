@@ -69,3 +69,13 @@ the integration test only has to prove the wiring.
 - B1 changes `test/harness/**` in parallel → the tests use only `connect`, `hello`, `send`, `expect`,
   `received`, `blackhole`, `trace`.
 - `reply_to` must not become a guess → stored as an id only with the A3 comment; no lookup, no quoting.
+
+## Found while building (input for C2)
+
+- "Pending" has tick granularity: ws reports a flush on `process.nextTick`, and two `msg` frames that arrive in
+  one TCP read are handled in one microtask drain, so with `maxPending: 1` the second push to a *healthy*
+  socket is dropped as full. The bound must leave room for one tick's worth of fan-out (the default 1000 does);
+  the test waits for the first `deliver` before the second send.
+- On loopback a blackholed peer backs the writer up only after ~0.5 MB on this Mac (more with Linux
+  autotuning); the backpressure test corks the destination's server-side TCP socket to make "never drains"
+  deterministic.

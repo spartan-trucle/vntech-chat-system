@@ -26,7 +26,12 @@ import type { Connection, ServerContext } from '../server.js';
 import { PushBuffer } from './pushBuffer.js';
 
 export interface MessagingOptions {
-  /** Pushes one destination socket may have pending (handed to ws, not yet flushed) before further pushes are dropped. */
+  /**
+   * Pushes one destination socket may have pending (handed to ws, not yet flushed) before
+   * further pushes are dropped. ws reports a flush on the next tick, so every push issued
+   * within one tick counts as pending even on a healthy socket: the bound must leave room
+   * for one tick's worth of fan-out, which is why the default is in the hundreds.
+   */
   maxPending: number;
   /** A pending push not flushed within this many ms is counted lost; the sync queue carries the message. */
   pushTimeoutMs: number;
