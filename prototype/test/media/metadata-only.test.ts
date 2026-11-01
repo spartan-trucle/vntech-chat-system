@@ -5,9 +5,9 @@ import { DEVICES, type FixtureDevice } from '../../src/fixtures.js';
 import { encodeFrame, type DeliverFrame, type MsgAckFrame } from '../../src/protocol.js';
 
 /**
- * S6 (media ADR condition): a media message carries a `media_key` only. Every frame that
- * crosses either socket is a few hundred bytes of metadata; no upload or download URL, no
- * digest and no payload ever ride the real-time connection.
+ * S6 (media ADR condition): a media message carries metadata only (`media_key`, size, mime,
+ * sha256 as in design §6.2). Every frame that crosses either socket is a few hundred bytes;
+ * no upload or download URL and no payload ever ride the real-time connection.
  */
 const FRAME_CAP = 600;
 const SHA = 'f00dfeed'.repeat(8);
@@ -50,11 +50,11 @@ describe('B7 / S6: a msg with media_key is stored and delivered as metadata only
     const { media_key, put_url } = (await res.json()) as { media_key: string; put_url: string };
     expect(put_url.startsWith('stub://')).toBe(true);
 
-    // 2. The message references the key only.
-    phone.send({ t: 'msg', client_msg_id: 'cid-s6', conversation_id: 'c1', body: 'look at this', media_key });
+    // 2. The message references the key and carries the §6.2 metadata, nothing of the bytes.
+    phone.send({ t: 'msg', client_msg_id: 'cid-s6', conversation_id: 'c1', body: 'look at this', media_key, media_size: 4_404_019, media_mime: 'image/jpeg', sha256: SHA });
     const ack = (await phone.expect('msg_ack')) as MsgAckFrame;
     const deliver = (await khanh.expect('deliver')) as DeliverFrame;
-    expect(deliver.message).toMatchObject({ message_id: ack.message_id, body: 'look at this', media_key, media_size: null, media_mime: null });
+    expect(deliver.message).toMatchObject({ message_id: ack.message_id, body: 'look at this', media_key, media_size: 4_404_019, media_mime: 'image/jpeg', sha256: SHA });
     const row = await server.ctx.ports.messages.get('c1', ack.message_id);
     expect(row?.media_key).toBe(media_key);
 
@@ -71,7 +71,6 @@ describe('B7 / S6: a msg with media_key is stored and delivered as metadata only
       expect(f.text).not.toContain('get_url');
       expect(f.text).not.toContain('stub://');
       expect(f.text).not.toContain('bytes');
-      expect(f.text).not.toContain(SHA);
       expect(f.text).not.toContain(put_url);
       expect(f.text).not.toContain(get_url);
     }

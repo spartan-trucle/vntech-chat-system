@@ -14,8 +14,10 @@
  * fetch before any message carries the key) and answers with a 1 h bearer-looking URL whose
  * host is the CDN for group conversations and the bucket for 1:1 (design §6.4).
  *
- * No auth in the prototype: `?user_id=` is the caller's identity. `media_size`/`media_mime`
- * on the stored row stay null; the `msg` frame carries `media_key` only (protocol gap, C2).
+ * No auth in the prototype: `?user_id=` is the caller's identity. A `msg` that carries a
+ * `media_key` also carries `media_size`, `media_mime` and `sha256` (design §6.2); this module
+ * vetoes it on `message_received` when the size does not match the intent it minted for that
+ * key or exceeds the cap, so the row the messaging module writes is the one the storage saw.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -148,6 +150,37 @@ export function registerMedia(ctx: ServerContext): () => void {
     return { status: 200, body: { get_url: `stub://${host}/${media_key}?sig=${sig}&exp=${expires_at}`, expires_at, host } };
   });
 
+  // Design §6.2: the message is sent after the upload with {media_key, size, mime, sha256}.
+  // The intent is the only thing this server knows about the object, so the claim must match it.
+  const offReceived = ctx.events.on('message_received', ({ conn, frame, reject }) => {
+    if (!frame.media_key) return;
+    const intent = intents.get(frame.media_key);
+    if (!intent) {
+      // A key this server never minted: nothing to check against. A size claim on it is unverifiable.
+      if (frame.media_size !== undefined) {
+        ctx.trace.add('media', `${conn.name}: media_key ${frame.media_key} was never minted here → unknown_media_key`);
+        reject('unknown_media_key', `no upload intent for ${frame.media_key}`);
+      }
+      return;
+    }
+    if (frame.media_size === undefined) {
+      reject('media_size_missing', `a msg with media_key must carry media_size (design §6.2)`);
+      return;
+    }
+    if (frame.media_size !== intent.size || frame.media_size > opts.capBytes) {
+      ctx.trace.add('media', `${conn.name}: size mismatch for ${frame.media_key}: claimed ${frame.media_size}, intent ${intent.size}, cap ${opts.capBytes}`);
+      reject('media_size_mismatch', `media_size ${frame.media_size} does not match the upload intent (${intent.size}) or exceeds the cap`);
+      return;
+    }
+    if (frame.media_mime !== undefined && frame.media_mime !== intent.mime) {
+      reject('media_mime_mismatch', `media_mime ${frame.media_mime} does not match the upload intent (${intent.mime})`);
+      return;
+    }
+    if (frame.sha256 !== undefined && frame.sha256 !== intent.sha256) {
+      reject('media_sha256_mismatch', `sha256 does not match the upload intent`);
+    }
+  });
+
   // The first message that carries a key decides which conversation authorizes its download.
   const offStored = ctx.events.on('message_stored', ({ message }) => {
     if (message.media_key && !sent.has(message.media_key)) {
@@ -156,6 +189,7 @@ export function registerMedia(ctx: ServerContext): () => void {
   });
 
   return () => {
+    offReceived();
     offStored();
     intents.clear();
     bySha.clear();

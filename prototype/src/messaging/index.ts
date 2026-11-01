@@ -88,6 +88,16 @@ export function registerMessaging(ctx: ServerContext): () => void {
       return;
     }
 
+    // Anyone may veto before the write (the media module checks §6.2 metadata against the intent).
+    let veto: { code: string; message: string } | undefined;
+    await ctx.events.emit('message_received', {
+      conn, frame, reject: (code, message) => { veto ??= { code, message }; },
+    });
+    if (veto) {
+      ctx.send(conn, { t: 'error', code: veto.code, message: veto.message });
+      return;
+    }
+
     // Dedup (design §1.4): a retry whose ack was lost gets the same ack and no second row.
     const already = await ctx.ports.messages.findByClientMsgId(user_id, client_msg_id);
     if (already !== undefined) {
@@ -108,10 +118,11 @@ export function registerMessaging(ctx: ServerContext): () => void {
       // An id only, never resolved or quoted here: whether the server quotes the replied-to
       // message, or the client does, is undecided (roadmap A3, reply quoting).
       reply_to: frame.reply_to ?? null,
+      // Metadata only, as the client sent it after the upload (design §6.2); validated above by the media module.
       media_key: frame.media_key ?? null,
-      // Size and mime are the media module's to fill from the upload intent (B7); null here.
-      media_size: null,
-      media_mime: null,
+      media_size: frame.media_size ?? null,
+      media_mime: frame.media_mime ?? null,
+      sha256: frame.sha256 ?? null,
       created_at: ctx.clock.now(),
     };
     await ctx.ports.messages.insert(message);

@@ -12,6 +12,7 @@ export function msg(over: Partial<Message> & { message_id: string }): Message {
     media_key: null,
     media_size: null,
     media_mime: null,
+    sha256: null,
     created_at: 0,
     ...over,
   };

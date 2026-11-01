@@ -28,6 +28,8 @@ export interface Message {
   media_key: string | null;
   media_size: number | null;
   media_mime: string | null;
+  /** Digest the client computed before upload; recipients verify the download (design §6.2). */
+  sha256: string | null;
   created_at: number;
 }
 
@@ -50,7 +52,11 @@ export interface MsgFrame {
   conversation_id: ConversationId;
   body: string;
   reply_to?: MessageId;
+  /** Set only after the upload completed (design §6.2); the three fields below travel with it. */
   media_key?: string;
+  media_size?: number;
+  media_mime?: string;
+  sha256?: string;
 }
 
 export interface AckFrame {
@@ -150,6 +156,7 @@ const messageShape: Shape = {
   media_key: { type: 'string|null' },
   media_size: { type: 'number|null' },
   media_mime: { type: 'string|null' },
+  sha256: { type: 'string|null' },
   created_at: { type: 'number' },
 };
 
@@ -167,6 +174,9 @@ const clientShapes: Record<ClientFrameType, Shape> = {
     body: { type: 'string' },
     reply_to: { type: 'string', optional: true },
     media_key: { type: 'string', optional: true },
+    media_size: { type: 'number', optional: true },
+    media_mime: { type: 'string', optional: true },
+    sha256: { type: 'string', optional: true },
   },
   ack: { up_to_stream_id: { type: 'string' } },
   receipt: { conversation_id: { type: 'string' }, last_read_id: { type: 'string' } },
@@ -231,6 +241,11 @@ export function decodeFrame(raw: string | Buffer, from: 'client' | 'server'): Fr
   if (!shape) throw new FrameError(`unknown ${from} frame type ${t}`);
   checkShape(t, obj, shape);
   if (t === 'deliver') checkShape('deliver.message', obj['message'] as Record<string, unknown>, messageShape);
+  if (t === 'msg' && obj['media_key'] === undefined) {
+    for (const name of ['media_size', 'media_mime', 'sha256']) {
+      if (obj[name] !== undefined) throw new FrameError(`msg: field ${name} is only valid together with media_key`);
+    }
+  }
   return obj as unknown as Frame;
 }
 

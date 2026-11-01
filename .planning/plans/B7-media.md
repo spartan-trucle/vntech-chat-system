@@ -85,3 +85,15 @@ and `npm run typecheck`. The clock is injected (`clock: { now: () => fixed }`) w
   carries `media_key` only, so the stored row's `media_size`/`media_mime` stay null (B2 writes the row). The
   intent table holds size and mime per key; C2 should either widen `MsgFrame` or let the media module fill
   the row from the intent on `message_stored`. Not changed here (`protocol.ts` and `messaging/` are not B7's).
+
+## Follow-up (lane B, after the hub's review of the first report)
+
+The "protocol gap" was a roadmap transcription error; design §6.2 is the authority. Closed on
+the lane branch: `MsgFrame` carries `media_size`, `media_mime`, `sha256` (optional, only with
+`media_key`; the decoder rejects them alone), the row gains `sha256`, the messaging module
+stores all three, and the media module vetoes on the new `message_received` hook when the
+claimed size does not match the intent minted for that key or exceeds the cap (`media_size_mismatch`),
+when an intent exists but no size is claimed (`media_size_missing`), when a size is claimed
+for a key never minted here (`unknown_media_key`), or when mime / sha256 contradict the
+intent. A key never minted here with no metadata still passes (uploads outside this
+server are not modelled). The S6 frame-size test keeps every socket frame under 600 bytes.

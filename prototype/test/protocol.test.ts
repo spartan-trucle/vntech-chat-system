@@ -6,6 +6,7 @@ const clientFrames: ClientFrame[] = [
   { t: 'hello', device_id: 'A1', user_id: 'truc', last_synced_message_id: '123-0', list_cursor: 1700000000000, app_state: 'background' },
   { t: 'msg', client_msg_id: 'c-1', conversation_id: 'c1', body: 'hi' },
   { t: 'msg', client_msg_id: 'c-2', conversation_id: 'c1', body: '', reply_to: '41', media_key: 'ap-southeast-1/2026/11/u1' },
+  { t: 'msg', client_msg_id: 'c-3', conversation_id: 'c1', body: 'pic', media_key: 'ap-southeast-1/2026/11/u1', media_size: 4404019, media_mime: 'image/jpeg', sha256: 'ab'.repeat(32) },
   { t: 'ack', up_to_stream_id: '55-0' },
   { t: 'receipt', conversation_id: 'c1', last_read_id: '41' },
   { t: 'watch', user_ids: ['khanh', 'linh'] },
@@ -21,7 +22,7 @@ const serverFrames: ServerFrame[] = [
     stream_id: '41-0',
     message: {
       conversation_id: 'c1', bucket: 202611, message_id: '41', sender_id: 'truc', client_msg_id: 'c-1',
-      body: 'hi', reply_to: null, media_key: null, media_size: null, media_mime: null, created_at: 1,
+      body: 'hi', reply_to: null, media_key: null, media_size: null, media_mime: null, sha256: null, created_at: 1,
     },
   },
   { t: 'receipt', conversation_id: 'c1', user_id: 'khanh', last_read_id: '41' },
@@ -50,6 +51,12 @@ describe('protocol frames', () => {
   test('rejects a server frame on the client side and vice versa', () => {
     expect(() => decodeFrame('{"t":"msg_ack","client_msg_id":"c","message_id":"1"}', 'client')).toThrow(FrameError);
     expect(() => decodeFrame('{"t":"ack","up_to_stream_id":"1-0"}', 'server')).toThrow(FrameError);
+  });
+
+  test('media metadata is only valid together with media_key (design §6.2)', () => {
+    expect(() => decodeFrame('{"t":"msg","client_msg_id":"c","conversation_id":"c1","body":"x","media_size":10}', 'client')).toThrow(FrameError);
+    expect(() => decodeFrame('{"t":"msg","client_msg_id":"c","conversation_id":"c1","body":"x","media_mime":"image/png"}', 'client')).toThrow(FrameError);
+    expect(() => decodeFrame('{"t":"msg","client_msg_id":"c","conversation_id":"c1","body":"x","sha256":"ab"}', 'client')).toThrow(FrameError);
   });
 
   test('rejects non-JSON', () => {

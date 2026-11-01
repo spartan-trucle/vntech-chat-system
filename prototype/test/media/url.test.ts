@@ -32,7 +32,8 @@ describe('B7 GET /media/{key}/url (design §6.3, §6.4): membership at minting t
     fetch(`${server!.httpUrl}/media/${media_key}/url?user_id=${user_id}`);
   /** Sends a msg carrying the key and waits for the ack, so `message_stored` has run. */
   const sendWith = async (c: ScriptedClient, conversation_id: string, media_key: string): Promise<void> => {
-    c.send({ t: 'msg', client_msg_id: `cid-${media_key.slice(-8)}-${conversation_id}`, conversation_id, body: 'photo', media_key });
+    // Design §6.2: the message after the upload carries the metadata the intent recorded.
+    c.send({ t: 'msg', client_msg_id: `cid-${media_key.slice(-8)}-${conversation_id}`, conversation_id, body: 'photo', media_key, media_size: 500_000 });
     await c.expect('msg_ack');
   };
 

@@ -59,6 +59,7 @@ describe('B2 send path: store, ids, dedup, write order, fan-out (design ยง2.2, ย
       media_key: 'vn/2026/11/k1',
       media_size: null,
       media_mime: null,
+      sha256: null,
       created_at: expect.any(Number),
     }]);
     expect(rows[0]!.created_at).toBeGreaterThanOrEqual(before);
@@ -69,13 +70,49 @@ describe('B2 send path: store, ids, dedup, write order, fan-out (design ยง2.2, ย
     expect(delivers(phone)).toHaveLength(0);
   });
 
+  test('media metadata on the frame lands on the row and in the deliver (design ยง6.2)', async () => {
+    const srv = await start();
+    const phone = await connect(DEVICES.trucPhone);
+    const khanh = await connect(DEVICES.khanhPhone);
+    // The media module (B7) vetoes metadata that no upload intent backs, so mint one first.
+    const res = await fetch(`${srv.httpUrl}/media/intent?user_id=truc`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ size: 480_000, mime: 'image/jpeg', sha256: 'ab'.repeat(32) }),
+    });
+    const { media_key } = (await res.json()) as { media_key: string };
+    phone.send(msg({ client_msg_id: 'cid-media', media_key, media_size: 480_000, media_mime: 'image/jpeg', sha256: 'ab'.repeat(32) }));
+    const ack = (await phone.expect('msg_ack')) as MsgAckFrame;
+    const row = await srv.ctx.ports.messages.get('c1', ack.message_id);
+    expect(row).toMatchObject({ media_key, media_size: 480_000, media_mime: 'image/jpeg', sha256: 'ab'.repeat(32) });
+    const deliver = (await khanh.expect('deliver')) as DeliverFrame;
+    expect(deliver.message).toMatchObject({ media_size: 480_000, media_mime: 'image/jpeg', sha256: 'ab'.repeat(32) });
+  });
+
+  test('a message_received listener can reject a msg before anything is stored', async () => {
+    const srv = await start();
+    srv.ctx.events.on('message_received', ({ frame, reject }) => {
+      if (frame.body === 'nope') reject('vetoed', 'the media module said no');
+    });
+    const inserts: string[] = [];
+    const insert = srv.ctx.ports.messages.insert.bind(srv.ctx.ports.messages);
+    srv.ctx.ports.messages.insert = async (m) => { inserts.push(m.message_id); await insert(m); };
+    const phone = await connect(DEVICES.trucPhone);
+    phone.send(msg({ client_msg_id: 'cid-veto', body: 'nope' }));
+    const err = (await phone.expect('error')) as ErrorFrame;
+    expect(err).toMatchObject({ code: 'vetoed', message: 'the media module said no' });
+    expect(inserts).toEqual([]);
+    phone.send(msg({ client_msg_id: 'cid-ok', body: 'fine' }));
+    await phone.expect('msg_ack');
+    expect(inserts).toHaveLength(1);
+  });
+
   test('reply_to and media_key are null when the frame carries none', async () => {
     const srv = await start();
     const phone = await connect(DEVICES.trucPhone);
     phone.send(msg({ client_msg_id: 'cid-2' }));
     const ack = (await phone.expect('msg_ack')) as MsgAckFrame;
     const row = await srv.ctx.ports.messages.get('c1', ack.message_id);
-    expect(row).toMatchObject({ reply_to: null, media_key: null, media_size: null, media_mime: null });
+    expect(row).toMatchObject({ reply_to: null, media_key: null, media_size: null, media_mime: null, sha256: null });
   });
 
   test('a msg to a conversation the sender is not a member of is refused and nothing is stored', async () => {
