@@ -1,0 +1,26 @@
+{
+  "name": "vntech-chat-prototype",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Protocol-correctness prototype of the chat server from docs/design.md. One process, in memory, no auth, no persistence, no multi-server.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test",
+    "scenarios": "tsx test/scenarios/run.ts",
+    "dev": "tsx src/main.ts"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "ws": "^8.22.1"
+  }
+}

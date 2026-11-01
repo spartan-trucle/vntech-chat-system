@@ -1,0 +1,58 @@
+import { describe, expect, test } from 'vitest';
+import { decodeFrame, encodeFrame, FrameError, type ClientFrame, type ServerFrame } from '../src/protocol.js';
+
+const clientFrames: ClientFrame[] = [
+  { t: 'hello', device_id: 'A1', user_id: 'truc', last_synced_message_id: null, list_cursor: null, app_state: 'foreground' },
+  { t: 'hello', device_id: 'A1', user_id: 'truc', last_synced_message_id: '123-0', list_cursor: 1700000000000, app_state: 'background' },
+  { t: 'msg', client_msg_id: 'c-1', conversation_id: 'c1', body: 'hi' },
+  { t: 'msg', client_msg_id: 'c-2', conversation_id: 'c1', body: '', reply_to: '41', media_key: 'ap-southeast-1/2026/11/u1' },
+  { t: 'ack', up_to_stream_id: '55-0' },
+  { t: 'receipt', conversation_id: 'c1', last_read_id: '41' },
+  { t: 'watch', user_ids: ['khanh', 'linh'] },
+  { t: 'unwatch', user_ids: ['khanh'] },
+];
+
+const serverFrames: ServerFrame[] = [
+  { t: 'hello_ack', server_time: 1 },
+  { t: 'hello_ack', server_time: 1, slow_path: true },
+  { t: 'msg_ack', client_msg_id: 'c-1', message_id: '41' },
+  {
+    t: 'deliver',
+    stream_id: '41-0',
+    message: {
+      conversation_id: 'c1', bucket: 202611, message_id: '41', sender_id: 'truc', client_msg_id: 'c-1',
+      body: 'hi', reply_to: null, media_key: null, media_size: null, media_mime: null, created_at: 1,
+    },
+  },
+  { t: 'receipt', conversation_id: 'c1', user_id: 'khanh', last_read_id: '41' },
+  { t: 'presence', user_id: 'khanh', state: 'online' },
+  { t: 'presence', user_id: 'khanh', state: 'offline', last_seen: 1700000000000 },
+  { t: 'error', code: 'bad_frame', message: 'nope' },
+];
+
+describe('protocol frames', () => {
+  test.each(clientFrames)('client frame round-trips: %o', (frame) => {
+    expect(decodeFrame(encodeFrame(frame), 'client')).toEqual(frame);
+  });
+
+  test.each(serverFrames)('server frame round-trips: %o', (frame) => {
+    expect(decodeFrame(encodeFrame(frame), 'server')).toEqual(frame);
+  });
+
+  test('rejects an unknown frame type', () => {
+    expect(() => decodeFrame('{"t":"nope"}', 'client')).toThrow(FrameError);
+  });
+
+  test('rejects a client frame missing a required field', () => {
+    expect(() => decodeFrame('{"t":"msg","conversation_id":"c1","body":"x"}', 'client')).toThrow(FrameError);
+  });
+
+  test('rejects a server frame on the client side and vice versa', () => {
+    expect(() => decodeFrame('{"t":"msg_ack","client_msg_id":"c","message_id":"1"}', 'client')).toThrow(FrameError);
+    expect(() => decodeFrame('{"t":"ack","up_to_stream_id":"1-0"}', 'server')).toThrow(FrameError);
+  });
+
+  test('rejects non-JSON', () => {
+    expect(() => decodeFrame('not json', 'client')).toThrow(FrameError);
+  });
+});
