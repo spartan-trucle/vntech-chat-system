@@ -198,4 +198,31 @@ export function registerHistory(ctx: ServerContext): void {
     };
     return { status: 200, body };
   }));
+
+  // ---- jump: by key, then a window around it (design §2.3, F10). Not a scroll-up loop, not the slow path. ----
+  ctx.http.route('GET', '/conversations/:id/messages/:message_id', (req) => handle(req, async () => {
+    const id = req.params['id'] ?? '';
+    const identity = await identify(req, id);
+    if ('status' in identity) return identity;
+    const message_id = parseCursor(req.params['message_id']) ?? '';
+    // `limit` is the window on each side; `before` / `after` override one side. Default: the row alone.
+    const limit = parseLimit(req.query['limit'], 0, MAX_PAGE_LIMIT, 0);
+    const beforeN = parseLimit(req.query['before'], limit, MAX_PAGE_LIMIT, 0);
+    const afterN = parseLimit(req.query['after'], limit, MAX_PAGE_LIMIT, 0);
+
+    const store = ctx.ports.messages;
+    const message = await store.get(id, message_id);
+    if (!message) return error(404, 'not_found');
+    ctx.trace.add('http', `${requestLine(req, ['limit', 'before', 'after'])} ← ${identity.who}`);
+
+    const bucket = bucketOf(message_id);
+    const before = beforeN > 0
+      ? (await walkBack(store, id, { startBucket: bucket, floorBucket: identity.conversation.created_bucket, before: message_id, limit: beforeN })).messages
+      : [];
+    const after = afterN > 0
+      ? (await walkForward(store, id, { startBucket: bucket, ceilBucket: bucketOfTime(ctx.clock.now()), after: message_id, limit: afterN })).messages
+      : [];
+    const body: JumpResponse = { message, before, after };
+    return { status: 200, body };
+  }));
 }
