@@ -10,6 +10,8 @@
  */
 
 import { SNOWFLAKE_EPOCH_MS, type MessageId } from '../ids.js';
+import { streamIdOf } from '../ports/index.js';
+import type { DeviceId, StreamId } from '../protocol.js';
 import type { ServerContext } from '../server.js';
 
 export interface SyncOptions {
@@ -39,6 +41,39 @@ export function idAt(ms: number): MessageId {
   return (BigInt(sinceEpoch) << TIMESTAMP_SHIFT).toString(10);
 }
 
-export function registerSync(_ctx: ServerContext): void | (() => void | Promise<void>) {
-  // Filled in step by step below.
+export function registerSync(ctx: ServerContext): () => void {
+  const queue = ctx.ports.syncQueue;
+
+  /** Every device ever appended to: the port has no "list streams", the sweeper walks this. */
+  const knownDevices = new Set<DeviceId>();
+  /** `MINID` boundary of the last sweep that dropped entries from that device's stream. */
+  const lastTrimmedId = new Map<DeviceId, StreamId>();
+
+  // ---- append: third in the write order, after the sender's ack (design §4.2) ----
+  const offAcked = ctx.events.on('message_acked', async ({ message, recipient_devices }) => {
+    const id = streamIdOf(message.message_id);
+    for (const device of recipient_devices) {
+      await queue.xadd(device, { id, m: message.message_id, c: message.conversation_id });
+      knownDevices.add(device);
+    }
+    ctx.trace.add('queue', `XADD sq:{device} #${message.message_id} × ${recipient_devices.length} devices`);
+  });
+
+  // ---- slow-path decision, before hello_ack (design §4.2, §4.7) ----
+  const offHello = ctx.events.on('hello', ({ conn, frame, ack }) => {
+    const device = conn.device_id as DeviceId;
+    const cursor = frame.last_synced_message_id;
+    if (cursor === null) {
+      // New or wiped device: it has no cursor, so it is treated as new (design §4.7) and loads via B4.
+      ack.slow_path = true;
+      ctx.trace.add('queue', `sq:${device}: no cursor → slow path (new device)`);
+      return;
+    }
+    void lastTrimmedId;
+  });
+
+  return () => {
+    offAcked();
+    offHello();
+  };
 }
