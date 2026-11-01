@@ -149,3 +149,11 @@ scaled up in those tests so `advance()` does not fire thousands of heartbeat tic
 - Client batch boundary is a heuristic (count or gap) because only the ack moves the cursor and the
   server does not mark batch ends → the gap timer guarantees progress whatever the sizes; reported for C2.
 - B6 edits `ScriptedClient.ts` in parallel → one contiguous block plus single-line hooks.
+
+## Follow-up (lane B, at merge)
+
+The core observation above was fixed in the core: `device_connected` now runs beside the
+connection's frame chain (`src/server.ts`), so acks sent during a replay reach
+`ctx.onFrame('ack')` while the drain waits. The socket tap and the consumed-ack counter
+were removed from `src/sync/index.ts`; the replay keeps a per-connection waiter that the
+ack handler settles and a disconnect aborts. A core test pins the behaviour.

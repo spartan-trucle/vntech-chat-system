@@ -8,18 +8,14 @@
  * on the device's `ack{up_to_stream_id}`. The ack is the only thing that moves the cursor,
  * the device keeps it, the server stores nothing (design §4.7).
  *
- * Waiting for the ack: the core handles one connection's frames strictly in order and
- * `hello` is handled inside that chain while it awaits `device_connected`, so an `ack`
- * sent during the replay sits behind the `hello` and would reach `ctx.onFrame('ack')`
- * only after the replay returned. The replay therefore listens on the socket itself for
- * the duration of the drain (a `ws` socket emits to every listener) and counts the acks it
- * consumed so the frame handler, which sees the same frames once the chain drains, does
- * not trace them twice.
+ * Waiting for the ack: the core runs `device_connected` beside the connection's frame
+ * chain, not inside it, so acks sent during the replay reach `ctx.onFrame('ack')` while the
+ * drain is waiting; the handler settles the per-connection waiter below.
  */
 
 import { SNOWFLAKE_EPOCH_MS, type MessageId } from '../ids.js';
 import { compareStreamIds, streamIdOf } from '../ports/index.js';
-import { decodeFrame, type DeviceId, type StreamId } from '../protocol.js';
+import type { DeviceId, StreamId } from '../protocol.js';
 import type { Connection, ServerContext } from '../server.js';
 
 export interface SyncOptions {
@@ -63,10 +59,8 @@ export function registerSync(ctx: ServerContext): () => void {
   const lastTrimmedId = new Map<DeviceId, StreamId>();
   /** Cursor to replay from, decided on `hello`, consumed on `device_connected`. */
   const replayFrom = new Map<string, StreamId>();
-  /** Acks the replay consumed off the socket; the frame handler skips that many. */
-  const tappedAcks = new Map<string, number>();
-  /** Aborts of replays in flight, run on shutdown. */
-  const aborts = new Set<() => void>();
+  /** Replays in flight, by connection: the ack handler feeds them, a disconnect aborts them. */
+  const inFlight = new Map<string, { onAck: (sid: StreamId) => void; abort: () => void }>();
 
   const traceAck = (conn: Connection, sid: StreamId): void => {
     ctx.trace.add('queue', `${conn.name} ack sid=${sid} (device-owned cursor; server stores nothing)`);
@@ -114,17 +108,7 @@ export function registerSync(ctx: ServerContext): () => void {
     let waiter: { need: StreamId; settle: (how: AckWait) => void } | null = null;
     let closed = false;
 
-    const onMessage = (data: unknown): void => {
-      let sid: StreamId;
-      try {
-        const frame = decodeFrame(String(data), 'client');
-        if (frame.t !== 'ack') return;
-        sid = frame.up_to_stream_id;
-      } catch {
-        return; // the core answers a bad frame when the chain gets to it
-      }
-      tappedAcks.set(conn.id, (tappedAcks.get(conn.id) ?? 0) + 1);
-      traceAck(conn, sid);
+    const onAck = (sid: StreamId): void => {
       if (acked.last === null || compareStreamIds(sid, acked.last) > 0) acked.last = sid;
       if (waiter && compareStreamIds(acked.last, waiter.need) >= 0) {
         const w = waiter;
@@ -152,9 +136,7 @@ export function registerSync(ctx: ServerContext): () => void {
       });
     };
 
-    conn.socket.on('message', onMessage);
-    conn.socket.on('close', abort);
-    aborts.add(abort);
+    inFlight.set(conn.id, { onAck, abort });
     try {
       let after = cursor;
       for (let batchNo = 0; ; batchNo += 1) {
@@ -183,9 +165,7 @@ export function registerSync(ctx: ServerContext): () => void {
         after = acked.last ?? last;
       }
     } finally {
-      aborts.delete(abort);
-      conn.socket.off('message', onMessage);
-      conn.socket.off('close', abort);
+      if (inFlight.get(conn.id)?.abort === abort) inFlight.delete(conn.id);
     }
   };
 
@@ -198,19 +178,14 @@ export function registerSync(ctx: ServerContext): () => void {
 
   const offDisconnected = ctx.events.on('device_disconnected', ({ conn }) => {
     replayFrom.delete(conn.id);
-    tappedAcks.delete(conn.id);
+    inFlight.get(conn.id)?.abort();
+    inFlight.delete(conn.id);
   });
 
   // ---- acks: the device advanced its cursor; the server keeps nothing (design §4.7) ----
   ctx.onFrame('ack', (conn, frame) => {
-    const tapped = tappedAcks.get(conn.id) ?? 0;
-    if (tapped > 0) {
-      // Already consumed (and traced) by the replay off the socket.
-      if (tapped === 1) tappedAcks.delete(conn.id);
-      else tappedAcks.set(conn.id, tapped - 1);
-      return;
-    }
     traceAck(conn, frame.up_to_stream_id);
+    inFlight.get(conn.id)?.onAck(frame.up_to_stream_id);
   });
 
   // ---- sweeper: XTRIM MINID <id windowMs ago> on every stream, every sweepMs (design §4.2, §4.5) ----
@@ -238,7 +213,8 @@ export function registerSync(ctx: ServerContext): () => void {
   return () => {
     if (sweeper !== null) ctx.timers.clearInterval(sweeper);
     sweeper = null;
-    for (const abort of [...aborts]) abort();
+    for (const { abort } of [...inFlight.values()]) abort();
+    inFlight.clear();
     offAcked();
     offHello();
     offConnected();
