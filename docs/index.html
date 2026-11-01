@@ -107,6 +107,32 @@ section{padding:48px 0;border-top:1px solid var(--line)}
 .verdict .against{border-left:3px solid var(--open);padding-left:12px}
 .crit{font-size:.9rem;color:var(--ink-2);margin:0 0 12px}
 
+
+/* argument log */
+.log{max-width:84ch;margin-top:8px}
+.arg{position:relative;padding:4px 0 28px 34px;border-left:2px solid var(--line)}
+.arg:last-child{padding-bottom:0}
+.arg::before{content:"";position:absolute;left:-8px;top:10px;width:14px;height:14px;border-radius:50%;background:var(--paper);border:3px solid var(--decided)}
+.arg.open::before{border-color:var(--open)}
+.arg h3{margin:0 0 .3em;font-size:1.25rem}
+.arg .status{font-size:.8rem;font-weight:500;margin-left:10px;vertical-align:middle}
+.arg .status.d{color:var(--decided)} .arg .status.o{color:var(--open)}
+.arg p{font-size:.97rem;margin:0 0 .8em}
+.arg .side{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:10px 0 14px}
+.arg .side > div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:.93rem}
+.arg .side .lbl{display:block;font-size:.78rem;color:var(--ink-2);margin-bottom:4px}
+.arg .side .for{border-top:3px solid var(--decided)} .arg .side .against{border-top:3px solid var(--open)}
+.arg .verdict{border-left:3px solid var(--decided);padding:6px 14px;background:var(--decided-bg);border-radius:0 8px 8px 0;font-size:.95rem}
+.arg.open .verdict{border-color:var(--open);background:var(--open-bg)}
+.arg dl{margin:0 0 .8em;font-size:.95rem}
+.arg dt{font-weight:600;margin-top:10px}
+.arg dd{margin:2px 0 0}
+.arg table{border-collapse:collapse;font-size:.9rem;margin:8px 0 14px;width:100%}
+.arg th,.arg td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.arg th{color:var(--ink-2);font-weight:500}
+.arg code{font-size:.9em;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+@media (max-width:700px){.arg .side{grid-template-columns:1fr}}
+
 /* asks */
 .asks{counter-reset:ask;max-width:70ch;padding:0;margin:0;list-style:none}
 .asks li{counter-increment:ask;padding:12px 0 12px 44px;position:relative;border-bottom:1px solid var(--line)}
@@ -137,6 +163,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <a href="#requirements">Requirements</a>
     <a href="#scale">Scale</a>
     <a href="#stack">Stack</a>
+    <a href="#arguments">Arguments</a>
     <a href="#asks">Open questions</a>
     <button class="toggle" id="theme" type="button" aria-label="Toggle dark mode">Dark</button>
   </nav>
@@ -304,8 +331,8 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <div class="cand"><b>NATS JetStream</b><span>Lighter than Kafka, durable streams, less ecosystem.</span></div>
     </div>
     <div class="verdict">
-      <div><span class="lbl">Lean</span><p>Direct push for online recipients, per-user sync queue for everything else. Kafka left the hot path once the canonical frame was chosen. What backs the sync queue is still open.</p></div>
-      <div class="against"><span class="lbl">Strongest case against</span><p>Direct push means a 100-member group with a slow recipient server stalls the sender's chat server. Where is the backpressure boundary?</p></div>
+      <div><span class="lbl">Lean</span><p>Direct push for online recipients; catch-up for everything else. Kafka left the hot path once the canonical frame was chosen. Backpressure answered: bounded per-destination buffer, drop to the device's catch-up path on timeout.</p></div>
+      <div class="against"><span class="lbl">Strongest case against</span><p>Does the per-device sync queue need to exist, when cursors plus the message store can already answer "what did I miss"? Argument 8 below.</p></div>
     </div>
   </article>
 
@@ -334,6 +361,120 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   </article>
 </section>
 
+
+<section id="arguments">
+  <div class="intro">
+    <h2>Arguments and decisions, in the order we had them</h2>
+    <p>This is the record of the debate so far: what was asked, what each side said, and what we settled or left open. Read it top to bottom and you have the reasoning behind every "decided" badge on the board above. Full write-ups with numbers live in <a href="design.md">design.md</a>.</p>
+  </div>
+
+  <div class="log">
+
+  <article class="arg">
+    <h3>1. Canonical design, or what we would actually run?<span class="status d">decided: canonical</span></h3>
+    <p>The first question on the page, because it sets the frame for every other one. "Canonical" means the architecture in Alex Xu's <em>System Design Interview</em> chapter 12: stateless API servers, stateful chat servers over WebSocket, a presence service, a wide-column message store, a per-user message sync queue, Snowflake IDs, push notifications.</p>
+    <div class="side">
+      <div class="for"><span class="lbl">Why canonical</span>This is practice. The point is to learn why chat systems look the way they do, and the textbook is the distilled version of WhatsApp, Messenger and Discord. Picking the familiar stack would be picking the lesson we skip.</div>
+      <div class="against"><span class="lbl">Why "what we'd run"</span>A Kotlin and Postgres system we can operate at 3 a.m. beats a Cassandra cluster we misconfigure. Practice that does not transfer to work is entertainment.</div>
+    </div>
+    <p class="verdict"><strong>Decided: canonical.</strong> This closed four layers at once: WebSocket transport, wide-column store, Snowflake IDs, direct push with a sync queue. It did <em>not</em> close the programming language, because the book never names one.</p>
+  </article>
+
+  <article class="arg">
+    <h3>2. Cassandra over Postgres: the five questions<span class="status d">decided: wide-column</span></h3>
+    <p>Truc asked five pointed questions about the store. The answers are the real argument behind the decision.</p>
+    <dl>
+      <dt>Fast write and read?</dt>
+      <dd>The pattern is append-heavy, read-recent, almost never update. Cassandra writes go to a commit log plus an in-memory table: no B-tree to rebalance, no primary to funnel through, so write throughput scales with node count. Postgres reaches 115 k writes/s only by sharding by conversation, and every shard still has one primary as the ceiling. Reads of "newest 50 in this conversation" are fast on both; the write path and the growth to 730 TB are what differ.</dd>
+      <dt>Do we need transactions?</dt>
+      <dd>A message insert touches one row. The only multi-row operation, "store message, then append to N sync queues", is deliberately <em>not</em> atomic: partial fan-out is retried idempotently because the message ID is already fixed. Group membership changes are rare enough for a lightweight transaction or an outbox. We give up cross-row ACID because the domain does not need it.</dd>
+      <dt>Where are we in CAP and ACID?</dt>
+      <dd>Cassandra is AP: quorum writes on replication factor 3 survive one node loss and are readable immediately by a quorum reader. We trade linearizability for availability, which is what chat wants: a partition should degrade to "your message is delayed", never "you cannot send". The price is duplicates, which is why every message carries a client-generated ID for dedup. On ACID we keep atomicity and durability per row, and isolation only within a partition. That is exactly the scope we use.</dd>
+      <dt>Why sort by Snowflake ID and not <code>created_at</code>?</dt>
+      <dd>You can, but you pay twice. Two messages in the same millisecond in one conversation collide unless you add a tiebreaker, so the key becomes <code>(created_at, message_id)</code> anyway. And a timestamp makes an ambiguous pagination cursor: <code>before=21:03:00.417</code> cannot say which of three messages at that millisecond it means. A Snowflake ID is timestamp plus tiebreaker in one 64-bit integer, so it is both the sort key and the cursor. The cost is clock skew between chat servers, accepted because a quoted reply carries its parent ID explicitly and NTP keeps skew under human perception. <code>created_at</code> stays as a plain column for display and bucket selection.</dd>
+      <dt>Multiple chat servers: do we need sticky sessions?</dt>
+      <dd>Yes, but not in the load-balancer sense. A WebSocket is one TCP connection, so it is stuck to one server by nature; the balancer only picks a server at connect time. What we need is the <em>inverse</em> lookup: when a message arrives for Khanh, which server holds Khanh's three connections? That is the Redis routing table, <code>route:{user}:{device} → server</code>. Sticky by connection, stateless on the API layer, shared routing map for cross-server delivery. The thing we must <em>not</em> do is pin a user to a server across reconnects, because that turns one node's crash into a permanent outage for its users.</dd>
+    </dl>
+    <p class="verdict"><strong>Decided:</strong> wide-column store, partition key (conversation, month bucket), clustering by Snowflake ID descending. The "nobody here has run Cassandra in anger" risk is real and parked under the canonical frame.</p>
+  </article>
+
+  <article class="arg">
+    <h3>3. Heartbeat, disconnect detection, auto-reconnect<span class="status d">decided</span></h3>
+    <p>Three jobs are usually conflated: keep idle sockets alive through NATs and carriers, detect an <em>unclean</em> drop so presence can mark the user offline, and let the client notice a half-open socket. A clean close is detected instantly; the heartbeat exists for the unclean case.</p>
+    <div class="side">
+      <div class="for"><span class="lbl">Decision</span>Server-initiated WebSocket ping frames every 5 s, two misses means dead (about 10 s). Client mirror rule: no ping for 15 s, close and reconnect with jittered backoff from 1 s to a 30 s cap. The <code>hello</code> frame on reconnect carries the device cursor, so the server replays what was missed before live traffic. Outgoing messages are written to a local outbox with a client-generated ID and flushed on reconnect; the server dedups for 24 h.</div>
+      <div class="against"><span class="lbl">The cost, named</span>The 5 s interval exists only because F7 says presence changes must be visible within 10 s. Relaxing F7 to 30 s makes the ping 15 s and cuts fleet heartbeat traffic three times. This is the cheapest lever on the page and should be re-asked before launch.</div>
+    </div>
+    <p>The insight that makes the interval affordable: <strong>heartbeats never write to Redis.</strong> Pongs update a timestamp in the chat server's memory. Presence in Redis is a lease renewed once every 30 s per server in one pipelined batch, so a node with 100 k connections does 3.3 k key writes a second instead of 20 k. A crashed server's leases expire in 60 s; service discovery also watches server liveness and marks that server's users offline faster.</p>
+    <p class="verdict"><strong>Decided.</strong> Why server-initiated protocol pings: browsers cannot send ping frames but answer them for free, pong is handled below application backpressure, and the server owns the clock.</p>
+  </article>
+
+  <article class="arg">
+    <h3>4. History: keep everything, load the newest, page on scroll<span class="status d">decided</span></h3>
+    <p>All messages are kept server-side, forever. Opening a conversation loads the newest 50; scrolling up pages older ones by cursor over plain HTTPS, never over the WebSocket, because history is a cacheable read path with its own scaling and a deep scroll by one user must not compete with live delivery for everyone on that node.</p>
+    <dl>
+      <dt>Partition by (conversation, month)</dt>
+      <dd>A 100-member group doing 10 k messages a day is 300 k rows a month, about 60 MB, well under the 100 MB partition guideline. Without the bucket, a five-year-old group is one multi-GB partition, the classic Cassandra failure.</dd>
+      <dt>Cursor, not offset</dt>
+      <dd><code>?before={message_id}&amp;limit=50</code>. The Snowflake timestamp selects the month bucket, so a cursor needs no lookup. Offsets are O(n) in a wide-column store and break when messages arrive while the user scrolls.</dd>
+      <dt>Two cursors per device per conversation</dt>
+      <dd><code>oldest_loaded</code> moves backwards for scroll-up over HTTPS. <code>last_synced</code> moves forward for new messages over the socket. They never meet.</dd>
+      <dt>Jump to a quoted parent outside the window</dt>
+      <dd>Fetch by key, then page around it. Not a scroll-up loop.</dd>
+    </dl>
+    <p class="verdict"><strong>Decided.</strong> Rejected: load full history on open (p50 impossible), offset paging, history over the socket, device-only history (fails new-device and lost-phone cases).</p>
+  </article>
+
+  <article class="arg">
+    <h3>5. Read receipts per member, unread state, notifications<span class="status d">decided</span></h3>
+    <p>Truc wanted per-member read tracking in groups, unread marking on every new message, and a push notification. Per member is the expensive choice if done naïvely: 100 read events per message in a full group, each fanned out to 150 devices, is 15 000 receipt frames for one message and 100 receipt rows for every message row.</p>
+    <div class="side">
+      <div class="for"><span class="lbl">What makes it affordable</span>Reading is monotonic. A member who read message 700 has read everything before it. So the state is not "who read message N" but "how far has each member read": one <code>last_read_id</code> per member per conversation, updated with <code>max()</code>, which is idempotent and order-independent. A message's status is derived by comparing cursors, never stored. Receipts are coalesced to one per conversation per 2 s and pushed only to members with that conversation on screen.</div>
+      <div class="against"><span class="lbl">What it costs</span>"Who has read" is a partition read plus a compare, not a stored list, so the UI does one small query when the sender opens the receipt sheet. Acceptable: nobody opens that sheet 100 times a second.</div>
+    </div>
+    <p>Unread is derived the same way: <code>last_message_id(conversation) &gt; last_read_id(conversation, user)</code>. One read cursor per <em>user</em>, not per device, is what makes reading on the phone clear the badge on the laptop. Notifications go only to devices without a live socket, carry a hint and never the body, and go to all offline devices of the user so the read-cursor push clears the rest.</p>
+    <p class="verdict"><strong>Decided.</strong> Rejected: receipt row per message per member, pushing receipts to everyone, per-device read cursors, pushing message bodies, a stored unread counter (hot key, drifts on retry).</p>
+  </article>
+
+  <article class="arg">
+    <h3>6. Fan-out and queueing, explained<span class="status d">direction decided; backing open</span></h3>
+    <p>This is the part between "the chat server has stored the message" and "it is on every recipient's screen". Two decisions hide in it.</p>
+    <dl>
+      <dt>Who does the delivery work, and when</dt>
+      <dd><strong>Fan-out on write</strong>: the sender's chat server does all the work at send time, looks up every recipient device, pushes to each one's server. <strong>Fan-out on read</strong>: write once, recipients pull when they look. For groups of 100, on write: 150 pushes is small and recipients expect messages without asking. The flip point is the large-channel follow-up: at 100 k members one send is 150 k pushes, and channels switch to fan-out on read.</dd>
+      <dt>Is there a queue between the store and the screen</dt>
+      <dd>If every message passes through a durable queue before reaching an online recipient, you pay the queue's latency on every delivery; a Kafka p99 alone can be most of the 500 ms budget. The textbook splits the cases: <strong>online recipient, push directly</strong> server to server, no queue in the path; <strong>everything else</strong>, meaning offline, reconnecting, and "did I miss anything", is served by a per-device sync queue drained from the device cursor. The queue is for catch-up, not the hot path.</dd>
+      <dt>What the sync queue actually is</dt>
+      <dd>Not a work queue with consumers. An ordered log per device of message IDs not yet acknowledged, read only by that device, trimmed as its cursor advances.</dd>
+      <dt>Backpressure, the counterpoint still on the board</dt>
+      <dd>Direct push means one slow recipient server in a 100-member group can stall the sender's server. The fix is a bounded per-destination buffer with a drop-to-queue rule: if the recipient server does not take the push within budget, the message stays in that device's sync queue and the device catches up on its own. Backpressure becomes a delay for one recipient, not a stall for the sender.</dd>
+    </dl>
+    <p class="verdict"><strong>Direction decided</strong> (direct push plus sync queue for catch-up). <strong>Open:</strong> what backs the queue, and whether it needs to exist at all. See argument 8.</p>
+  </article>
+
+  <article class="arg open">
+    <h3>7. Chat-server runtime: Kotlin on Netty, Elixir, or Go<span class="status o">open</span></h3>
+    <p>The first unanswered question after the canonical frame. Before comparing the three, the challenge on the table is whether the decision is load-bearing at all.</p>
+    <div class="side">
+      <div class="against"><span class="lbl">The challenge</span>Every decision so far shows up in an artifact: the store shapes the schema, the transport shapes the heartbeat protocol, the ID shapes the cursor. The runtime shapes none of them; all three candidates hold 100 k sockets per node. So: <strong>what will be different in this repository depending on the runtime?</strong> If the answer is "a line in design.md", the verdict is "revisit when there is code" and the hour goes to presence fan-out instead.</div>
+      <div class="for"><span class="lbl">When it would matter</span>If the exercise ends in a prototype chat server to test the heartbeat design, the runtime matters a lot, and the argument becomes "which runtime teaches the most per week of practice", not "which is best for WhatsApp". Then BEAM is the strongest candidate precisely because it is the one nobody would pick at work.</div>
+    </div>
+    <p class="verdict"><strong>Open.</strong> Waiting on: prototype, or design only?</p>
+  </article>
+
+  <article class="arg open">
+    <h3>8. Does the sync queue need to exist?<span class="status o">open</span></h3>
+    <p>Asked as "Cassandra, Redis Streams, or Kafka for the sync queue", answered with a prior question.</p>
+    <div class="side">
+      <div class="against"><span class="lbl">The challenge</span>After arguments 4 and 5 we already have: the message store ordered by ID per conversation, <code>conv:{id}:last</code> in Redis, and a cursor per device per conversation. "What did this device miss" can be answered by listing the user's conversations, comparing each one's last ID to the device cursor, and paging the store forward for the ones that are behind. The sync queue is a second write of every message times 150 devices in a full group, roughly 300 billion appends a day, into a structure that exists only to be trimmed. <strong>What does it give a reconnecting device that "compare cursors, then page the store" does not?</strong></div>
+      <div class="for"><span class="lbl">The one defence so far</span>A user in 500 conversations makes the comparison itself expensive on every reconnect, and mobile reconnects are constant. If that is the case being protected, the argument is about the threshold where a queue beats a scan, not about which product backs the queue.</div>
+    </div>
+    <p class="verdict"><strong>Open.</strong> If no queue survives this, the backing-store question disappears and the diagram loses a box.</p>
+  </article>
+
+  </div>
+</section>
+
 <section id="asks">
   <div class="intro">
     <h2>Questions to settle before the first diagram</h2>
@@ -347,6 +488,8 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <li><s>Do read receipts in groups need per-member tracking, or is "read by N" enough?</s> <strong>Answered: per member.</strong> Made affordable by storing one read cursor per member per conversation instead of a receipt per message, and by coalescing receipt pushes (design.md §3).</li>
     <li><s>Does the server keep history forever, or is it a relay with device-side storage?</s> <strong>Answered: forever, server-side.</strong> The month-bucketed partitions in design.md §2 already assume this; retention becomes a tiering question only.</li>
     <li>For media: regional buckets or global CDN? Full-size delivery without variants makes the CDN case weaker than usual.</li>
+    <li>Is the exercise going to produce a prototype chat server, or only the design? Decides whether the runtime question (argument 7) is worth an hour.</li>
+    <li>Does a reconnecting device need a sync queue, or is "compare cursors, then page the store" enough (argument 8)? If a queue survives, what backs it?</li>
   </ol>
 </section>
 
