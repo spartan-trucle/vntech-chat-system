@@ -449,7 +449,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <dt>Backpressure, the counterpoint still on the board</dt>
       <dd>Direct push means one slow recipient server in a 100-member group can stall the sender's server. The fix is a bounded per-destination buffer with a drop-to-queue rule: if the recipient server does not take the push within budget, the message stays in that device's sync queue and the device catches up on its own. Backpressure becomes a delay for one recipient, not a stall for the sender.</dd>
     </dl>
-    <p class="ruling"><strong>Direction decided</strong> (direct push plus sync queue for catch-up). <strong>Open:</strong> what backs the queue, and whether it needs to exist at all. See argument 8.</p>
+    <p class="ruling"><strong>Direction decided</strong> (direct push plus sync queue for catch-up), and the queue itself survived argument 8. <strong>Open:</strong> what backs the queue, once the write volume is estimated.</p>
   </article>
 
   <article class="arg open">
