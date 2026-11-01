@@ -1,0 +1,831 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Chat System — the target, simulated</title>
+<meta name="description" content="A clickable prototype of the chat client the design has to deliver: three devices, one simulated server, and a trace of every hop. No build step, no backend.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F3F5F8; --ink:#16212E; --ink-2:#4A5666; --ink-3:#7A8798; --line:#D3DAE3; --card:#FFFFFF; --well:#EEF1F5;
+  --out:#0F7B83; --out-ink:#FFFFFF; --in:#DCE2EA; --in-ink:#16212E;
+  --open:#B9771A; --open-bg:#FBF1E1; --decided:#2F6B3C; --decided-bg:#E4F0E6; --ok:#3BB273; --bad:#B8442E; --bad-bg:#F9E6E1;
+  --tick:#9FB4C7; --tick-read:#5ECBD3; --c1:#0A96A6; --c2:#5B4FB7; --c3:#B9771A;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --paper:#0F161F; --ink:#E6ECF2; --ink-2:#9AA8B8; --ink-3:#6F7F92; --line:#273341; --card:#141D28; --well:#0F161F;
+  --out:#15919A; --out-ink:#06161A; --in:#1E2A38; --in-ink:#E6ECF2;
+  --open:#E0A24A; --open-bg:#2C2212; --decided:#7AC48A; --decided-bg:#15281B; --ok:#4CC882; --bad:#E07A66; --bad-bg:#33201B;
+  --tick:#56687C; --tick-read:#7FDDE4; --c1:#2AA7B3; --c2:#8E80E0; --c3:#BD8436;
+}}
+:root[data-theme="dark"]{
+  --paper:#0F161F; --ink:#E6ECF2; --ink-2:#9AA8B8; --ink-3:#6F7F92; --line:#273341; --card:#141D28; --well:#0F161F;
+  --out:#15919A; --out-ink:#06161A; --in:#1E2A38; --in-ink:#E6ECF2;
+  --open:#E0A24A; --open-bg:#2C2212; --decided:#7AC48A; --decided-bg:#15281B; --ok:#4CC882; --bad:#E07A66; --bad-bg:#33201B;
+  --tick:#56687C; --tick-read:#7FDDE4; --c1:#2AA7B3; --c2:#8E80E0; --c3:#BD8436;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:400 16px/1.5 "IBM Plex Sans",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--out)}
+button{font:inherit;color:inherit}
+a:focus-visible,button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--out);outline-offset:2px}
+h1,h2{font-family:"IBM Plex Serif",Georgia,serif;font-weight:600;line-height:1.15;margin:0 0 .4em}
+h1{font-size:clamp(1.6rem,3.4vw,2.4rem);letter-spacing:-.01em;max-width:30ch}
+p{max-width:72ch;margin:0 0 1em}
+code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.88em;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.wrap{max-width:1500px;margin:0 auto;padding:0 16px}
+header.top{display:flex;justify-content:space-between;align-items:center;padding:16px 0;border-bottom:1px solid var(--line);font-size:.95rem;color:var(--ink-2);gap:12px;flex-wrap:wrap}
+header.top nav{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+header.top nav a{color:var(--ink-2);text-decoration:none}
+.toggle{background:none;border:1px solid var(--line);color:var(--ink-2);border-radius:999px;padding:4px 12px;font-size:.85rem;cursor:pointer}
+
+.lead{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:32px;padding:32px 0 20px;align-items:end}
+.lead .lede{color:var(--ink-2);font-size:1.05rem}
+.controls{display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.clockline{display:flex;gap:14px;align-items:center;font-size:.9rem;color:var(--ink-2);flex-wrap:wrap}
+.clock{font-family:"IBM Plex Mono",monospace;font-size:1.3rem;color:var(--ink);font-weight:500}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.seg button{background:none;border:0;padding:4px 12px;cursor:pointer;color:var(--ink-2);font-size:.85rem}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.scen{display:flex;flex-wrap:wrap;gap:8px}
+.scen button{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 12px;cursor:pointer;font-size:.88rem;text-align:left}
+.scen button:hover{border-color:var(--out)}
+.scen button:disabled{opacity:.5;cursor:default}
+.scen-status{font-size:.88rem;color:var(--ink-2);min-height:1.4em}
+
+.bench{display:flex;gap:16px;align-items:stretch;padding:8px 0 24px;overflow-x:auto}
+.device{background:var(--card);border:1px solid var(--line);border-radius:20px;display:flex;flex-direction:column;height:660px;overflow:hidden;position:relative;flex:0 0 auto}
+.device.phone{width:312px}
+.device.laptop{width:580px;border-radius:14px}
+.dhead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);font-size:.85rem;background:var(--card)}
+.dhead b{font-weight:600}
+.dhead .who{color:var(--ink-2)}
+.conn{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2);margin-left:auto;white-space:nowrap}
+.conn::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok)}
+.conn.re::before{background:var(--open)}
+.conn.off::before{background:var(--ink-3)}
+.netbtn{border:1px solid var(--line);background:none;border-radius:999px;padding:3px 10px;font-size:.78rem;cursor:pointer;color:var(--ink-2);white-space:nowrap}
+.netbtn.down{border-color:var(--bad);color:var(--bad)}
+.tray{display:flex;flex-direction:column;gap:6px;padding:6px 10px 0}
+.tray:empty{display:none}
+.hint{display:flex;align-items:center;gap:8px;background:var(--well);border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:.8rem}
+.hint b{font-weight:500}
+.hint small{color:var(--ink-2)}
+.hint button{margin-left:auto;border:0;background:none;color:var(--out);cursor:pointer;font-size:.8rem;font-weight:500}
+.banner{font-size:.78rem;padding:5px 12px;background:var(--open-bg);color:var(--open);border-bottom:1px solid var(--line)}
+.banner.off{background:var(--well);color:var(--ink-2)}
+.banner.sync{background:var(--decided-bg);color:var(--decided)}
+.screen{flex:1;min-height:0;display:flex}
+.laptop .screen{display:grid;grid-template-columns:212px 1fr}
+.laptop .list{border-right:1px solid var(--line)}
+.list{overflow:auto;flex:1;min-width:0}
+.list h3{font-family:"IBM Plex Serif",serif;font-size:1.2rem;font-weight:600;margin:0;padding:12px 14px 6px}
+.row{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px;padding:9px 14px;border:0;background:none;width:100%;text-align:left;cursor:pointer;align-items:center}
+.row:hover,.row.sel{background:var(--well)}
+.row .nm{font-weight:500;display:flex;align-items:center;gap:6px;font-size:.92rem}
+.row .pv{color:var(--ink-2);font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row.unread .pv{color:var(--ink);font-weight:500}
+.row .tm{font-size:.72rem;color:var(--ink-3);text-align:right}
+.badge{display:inline-block;min-width:18px;height:18px;line-height:18px;text-align:center;border-radius:9px;background:var(--out);color:var(--out-ink);font-size:.7rem;font-weight:600;padding:0 5px;margin-top:3px}
+.avatar{width:36px;height:36px;border-radius:50%;background:var(--in);display:grid;place-items:center;font-weight:600;color:var(--in-ink);font-size:.9rem;position:relative}
+.avatar.g{border-radius:10px;font-size:.75rem}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);display:inline-block;border:2px solid var(--card);box-sizing:content-box}
+.avatar .dot{position:absolute;right:-2px;bottom:-2px}
+.dot.off{display:none}
+.chat{display:flex;flex-direction:column;min-height:0;flex:1;min-width:0}
+.chead{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line)}
+.chead .back{border:0;background:none;cursor:pointer;font-size:1.1rem;padding:2px 6px;color:var(--ink-2)}
+.chead .nm{font-weight:500;line-height:1.2}
+.chead .pr{font-size:.78rem;color:var(--ink-2)}
+.chead .pr.on{color:var(--decided)}
+.msgs{flex:1;overflow:auto;padding:12px 12px 6px;display:flex;flex-direction:column;gap:7px;background:var(--well)}
+.m{max-width:84%;padding:7px 10px 5px;border-radius:14px;font-size:.9rem;line-height:1.38;position:relative;word-wrap:break-word}
+.m.in{background:var(--card);color:var(--in-ink);align-self:flex-start;border-bottom-left-radius:4px;border:1px solid var(--line)}
+.m.out{background:var(--out);color:var(--out-ink);align-self:flex-end;border-bottom-right-radius:4px}
+.m .snd{font-size:.74rem;font-weight:600;color:var(--c2);margin-bottom:2px}
+.m .q{border-left:3px solid currentColor;opacity:.78;padding:2px 8px;margin:0 0 5px;font-size:.8rem;border-radius:3px;background:rgba(0,0,0,.05)}
+.m .q i{font-style:italic;opacity:.8}
+.m .meta{display:flex;justify-content:flex-end;gap:6px;font-size:.68rem;opacity:.75;margin-top:1px;align-items:center}
+.m .tick{letter-spacing:-.22em;font-size:.8rem}
+.m.out .tick.read{color:var(--tick-read)}
+.m.out.pend{opacity:.75}
+.m .act{position:absolute;top:-10px;right:6px;display:none;gap:4px}
+.m:hover .act{display:flex}
+.m .act button{border:1px solid var(--line);background:var(--card);color:var(--ink-2);border-radius:999px;font-size:.68rem;padding:1px 8px;cursor:pointer}
+.m.out .act button{color:var(--ink-2)}
+.m.out{cursor:default}
+.m.out.grp{cursor:pointer}
+.media{display:flex;gap:9px;align-items:center;margin-bottom:5px;min-width:180px}
+.media .ic{width:40px;height:40px;border-radius:9px;background:rgba(0,0,0,.1);flex:0 0 auto;display:grid;place-items:center;font-size:.7rem;font-weight:600}
+.m.out .media .ic{background:rgba(255,255,255,.28)}
+.media .ic.img{background:linear-gradient(135deg,var(--c1),var(--c2))}
+.media .nm{font-size:.84rem;font-weight:500;line-height:1.2}
+.media small{display:block;font-size:.72rem;opacity:.8}
+.media button{border:1px solid currentColor;background:none;color:inherit;border-radius:999px;font-size:.72rem;padding:1px 9px;cursor:pointer;margin-top:3px}
+.prog{height:4px;background:rgba(0,0,0,.12);border-radius:2px;margin:3px 0 5px;overflow:hidden}
+.m.out .prog{background:rgba(255,255,255,.3)}
+.prog i{display:block;height:100%;background:currentColor;width:0}
+.sys{align-self:center;font-size:.74rem;color:var(--ink-2);padding:2px 0}
+.composer{border-top:1px solid var(--line);padding:8px 10px;display:flex;flex-direction:column;gap:6px;background:var(--card)}
+.replybar{display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--ink-2);border-left:3px solid var(--out);padding:2px 8px;background:var(--well);border-radius:3px}
+.replybar b{color:var(--ink);font-weight:500}
+.replybar button{margin-left:auto;border:0;background:none;cursor:pointer;color:var(--ink-2)}
+.cline{display:flex;gap:6px;align-items:center;position:relative}
+.cline input{flex:1;min-width:0;border:1px solid var(--line);border-radius:999px;padding:7px 12px;font:inherit;font-size:.9rem;background:var(--paper);color:var(--ink)}
+.cline button{border:0;background:none;cursor:pointer;font-size:.85rem;padding:4px 6px;color:var(--ink-2)}
+.cline button.send{background:var(--out);color:var(--out-ink);border-radius:999px;padding:6px 12px;font-weight:500}
+.attach-menu{position:absolute;bottom:40px;left:0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px;display:flex;flex-direction:column;gap:2px;z-index:3;box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.attach-menu button{text-align:left;border-radius:6px;padding:6px 10px;font-size:.84rem;color:var(--ink)}
+.attach-menu button:hover{background:var(--well)}
+.attach-menu small{display:block;color:var(--ink-2);font-size:.72rem}
+.toast{position:absolute;left:12px;right:12px;bottom:70px;background:var(--bad-bg);color:var(--bad);border:1px solid var(--bad);border-radius:10px;padding:8px 12px;font-size:.82rem;z-index:4}
+.detail{position:absolute;inset:auto 12px 70px 12px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:.84rem;z-index:4;box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.detail h4{margin:0 0 6px;font-size:.84rem;font-weight:600}
+.detail div{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line)}
+.detail div:last-of-type{border:0}
+.detail .st.read{color:var(--decided)} .detail .st.deliv{color:var(--ink-2)} .detail .st.sent{color:var(--ink-3)}
+.detail button{margin-top:6px;border:0;background:none;color:var(--out);cursor:pointer;padding:0}
+.empty{display:grid;place-items:center;color:var(--ink-3);font-size:.9rem;padding:20px;text-align:center}
+
+aside.trace{flex:1 1 320px;min-width:300px;height:660px;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.thead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);font-size:.85rem}
+.thead b{font-weight:600}
+.thead span{color:var(--ink-2)}
+.thead button{margin-left:auto;border:1px solid var(--line);background:none;border-radius:999px;padding:2px 10px;font-size:.78rem;cursor:pointer;color:var(--ink-2)}
+.tl{flex:1;overflow:auto;padding:8px 10px;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.74rem;line-height:1.45}
+.tl div{display:grid;grid-template-columns:62px 58px minmax(0,1fr);gap:8px;padding:2px 0;border-bottom:1px dashed var(--line);align-items:start}
+.tl .t{color:var(--ink-3)}
+.tl .tag{border-radius:4px;padding:0 5px;font-weight:500;text-align:center;white-space:nowrap;font-size:.68rem;line-height:1.5}
+.tag.store{background:var(--c2);color:#fff}
+.tag.ack{background:var(--decided-bg);color:var(--decided)}
+.tag.queue{background:var(--open-bg);color:var(--open)}
+.tag.push{background:var(--c1);color:#fff}
+.tag.apns{background:var(--c3);color:#fff}
+.tag.hb{background:var(--well);color:var(--ink-3)}
+.tag.presence{background:var(--decided);color:#fff}
+.tag.receipt{background:var(--well);color:var(--ink-2)}
+.tag.http{background:var(--in);color:var(--in-ink)}
+.tag.media{background:var(--in);color:var(--in-ink)}
+.tag.dedup{background:var(--bad-bg);color:var(--bad)}
+.tag.lost{background:var(--bad);color:#fff}
+.tag.note{background:var(--ink);color:var(--paper)}
+.tl .note-ln{grid-column:1 / -1;color:var(--ink);font-weight:500;font-family:"IBM Plex Sans",sans-serif;font-size:.82rem;padding:6px 0 4px}
+
+.guide{padding:12px 0 48px;border-top:1px solid var(--line)}
+.guide h2{font-size:1.4rem}
+.guide ul{max-width:80ch;padding-left:1.2em;margin:0 0 1em}
+.guide li{margin-bottom:.4em}
+.guide .cols{display:grid;grid-template-columns:1fr 1fr;gap:12px 40px}
+footer{padding:0 0 40px;color:var(--ink-2);font-size:.88rem}
+@media (max-width:900px){ .lead{grid-template-columns:1fr} .guide .cols{grid-template-columns:1fr} }
+@media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div>vntech · The Chat System · <a href="../index.html">notebook</a></div>
+  <nav aria-label="Sections">
+    <a href="../specification.md">specification.md</a>
+    <a href="../design.md">design.md</a>
+    <a href="#guide">What to try</a>
+    <button class="toggle" id="theme" type="button" aria-label="Toggle dark mode">Dark</button>
+  </nav>
+</header>
+
+<section class="lead">
+  <div>
+    <h1>This is the target: what the client has to feel like.</h1>
+    <p class="lede">Three devices and a simulated server, all inside this page. Truc is on a phone and a laptop; Khanh is on a phone; Linh, Minh and An are scripted members of the group. Drop a network, send while it is down, open a chat on one device, and read the trace on the right against <a href="../design.md">design.md</a>: store, then ack, then queue; dead after two missed pings; replay from the device cursor; read on one device clears the rest.</p>
+  </div>
+  <div class="controls">
+    <div class="clockline">
+      <span class="clock" id="clock">00:00:00</span>
+      <span>simulated clock</span>
+      <span class="seg" role="group" aria-label="Clock speed">
+        <button type="button" data-speed="1" aria-pressed="true">real time</button>
+        <button type="button" data-speed="4" aria-pressed="false">4× faster</button>
+      </span>
+    </div>
+    <div class="scen" id="scen">
+      <button type="button" data-s="offline">Khanh goes offline, Truc sends three</button>
+      <button type="button" data-s="multidev">Read on the laptop, phone badge clears</button>
+      <button type="button" data-s="group">Group message, who has read it</button>
+      <button type="button" data-s="blip">A 3-second blip, nobody notices</button>
+    </div>
+    <div class="scen-status" id="scen-status">Or just use the devices: type, reply, attach, drop a network.</div>
+  </div>
+</section>
+
+<main class="bench" id="bench" aria-label="Devices and server trace"></main>
+
+<section class="guide" id="guide">
+  <h2>What to try, and what the design says should happen</h2>
+  <div class="cols">
+    <div>
+      <ul>
+        <li><strong>Send from Truc's phone to Khanh.</strong> Trace: store, ack to the sender, queue append per device, push to Khanh's socket and to Truc's laptop. The tick turns ✓ on ack, ✓✓ when Khanh's phone reports delivery, teal ✓✓ when Khanh opens the chat.</li>
+        <li><strong>Drop Khanh's network, then send.</strong> For ten seconds the server still thinks Khanh is connected: the push is written to a dead socket and only the sync queue has the message. After two missed pings the route is removed; Truc's header shows <em>last seen</em> five seconds later; from then on new messages also trigger a push notification hint, never the body.</li>
+        <li><strong>Restore Khanh's network.</strong> The client reconnects with backoff, sends <code>hello</code> with its cursor, and the server replays exactly the missed messages in order. Messages typed while offline sat in the outbox and are flushed; a retry of an already-stored one is answered with the same ID.</li>
+      </ul>
+    </div>
+    <div>
+      <ul>
+        <li><strong>Open a chat on the laptop while the phone shows it unread.</strong> One read cursor per user: the phone's badge clears without being touched, and the sender's ticks turn teal.</li>
+        <li><strong>Post in the group, then click your own bubble.</strong> Per-member state, derived from read cursors: who has read, who only received. Linh reads in 3 s, Minh in 6, An in 9.</li>
+        <li><strong>Attach.</strong> The 12 MB file is refused at the upload-link step, before any byte moves. The photo is compressed on the device first; the video goes as-is. The message is sent only after the upload completes; recipients fetch on demand, group media through the CDN.</li>
+        <li><strong>Reply.</strong> The quote is resolved by ID on the reading device, not copied into the message.</li>
+      </ul>
+    </div>
+  </div>
+  <p>Not in this prototype: chat-server failure, service discovery, history paging past the seeded messages, end-to-end encryption. The protocol prototype that proves the heartbeat and replay against real sockets is the Node.js one described in the notebook (component 8).</p>
+</section>
+<footer>A simulated client. Nothing here talks to a network; numbers follow the design (ping 5 s, dead at 10 s, pending-offline 5 s, backoff 1 s to 30 s with jitter).</footer>
+</div>
+
+<script>
+(function(){
+'use strict';
+/* ---------- theme ---------- */
+var root=document.documentElement, tbtn=document.getElementById('theme');
+function setTheme(t){root.setAttribute('data-theme',t);tbtn.textContent=t==='dark'?'Light':'Dark';try{localStorage.setItem('theme',t)}catch(e){}}
+var saved=null;try{saved=localStorage.getItem('theme')}catch(e){}
+if(saved)setTheme(saved);else tbtn.textContent=matchMedia('(prefers-color-scheme: dark)').matches?'Light':'Dark';
+tbtn.onclick=function(){var dark=root.getAttribute('data-theme')?root.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;setTheme(dark?'light':'dark')};
+
+/* ---------- simulated clock and scheduler ---------- */
+var SPEED=1, sim=0, wall0=Date.now()-(Date.now()%1000);
+var timers=[];
+function at(delay,fn){timers.push({t:sim+delay,fn:fn});}
+function fmt(ms){var d=new Date(wall0+ms);return [d.getHours(),d.getMinutes(),d.getSeconds()].map(function(n){return (n<10?'0':'')+n}).join(':')}
+function fmtShort(ms){return fmt(ms).slice(0,5)}
+function hop(fn){at(40,fn)}   /* one network hop ≈ 40 ms */
+
+/* ---------- trace ---------- */
+var tl, traceCount=0;
+function trace(tag,text){
+  if(!tl)return;
+  var row=document.createElement('div');
+  if(tag==='note'){row.innerHTML='<span class="note-ln"></span>';row.firstChild.textContent=text;}
+  else{row.innerHTML='<span class="t"></span><span class="tag '+tag+'"></span><span></span>';row.children[0].textContent=fmt(sim);row.children[1].textContent=tag;row.children[2].textContent=text;}
+  tl.appendChild(row);
+  if(++traceCount>400){tl.removeChild(tl.firstChild);traceCount--;}
+  tl.scrollTop=tl.scrollHeight;
+}
+
+/* ---------- data ---------- */
+var USERS={truc:{name:'Truc'},khanh:{name:'Khanh'},linh:{name:'Linh'},minh:{name:'Minh'},an:{name:'An'}};
+var BOT_DEVICES={C1:'linh',D1:'minh',E1:'an'};
+var CONVS={
+  c1:{id:'c1',type:'dm',members:['truc','khanh']},
+  c2:{id:'c2',type:'group',name:'vntech design',members:['truc','khanh','linh','minh','an']},
+  c3:{id:'c3',type:'dm',members:['truc','linh']}
+};
+var seq=20;
+function nextId(){return ++seq}
+var seedAt=-(45*60*1000);
+function seed(id,c,from,body,replyTo,dt){return {id:id,conv:c,from:from,body:body,replyTo:replyTo||null,media:null,at:seedAt+dt}}
+var S={
+  routes:{},            /* deviceId → {lastPong} */
+  msgs:{c1:[],c2:[],c3:[]},
+  last:{},              /* conv → last message */
+  dedup:{},             /* sender|cid → id */
+  sq:{},                /* deviceId → [{sid,id,conv}] */
+  sqSeq:0,
+  read:{c1:{},c2:{},c3:{}},     /* conv → user → id */
+  deliv:{c1:{},c2:{},c3:{}},    /* conv → device → id */
+  presence:{},          /* user → {state,lastSeen} */
+  watchers:{},          /* user → {deviceId:true} */
+  open:{},              /* deviceId → conv */
+  pingSeq:0
+};
+[
+  seed(1,'c1','truc','Does the sender get an ack before or after the store commits?',null,0),
+  seed(2,'c1','khanh','After. Otherwise "sent" is a lie when the primary dies.',null,40000),
+  seed(3,'c1','truc','And for a 100-person group, ack once, fan out async?',2,90000),
+  seed(4,'c1','khanh','Ack once the row is in Cassandra. Fan-out is the server\'s problem after that.',null,150000),
+  seed(5,'c2','linh','Moving the sync-queue discussion here.',null,300000),
+  seed(6,'c2','minh','Redis Streams, one per device, 24 h window. Decided.',null,360000),
+  seed(7,'c2','an','I\'ll write the ADR tonight.',null,420000),
+  seed(8,'c2','truc','Thanks. The cursor is device-owned, remember.',null,480000),
+  seed(9,'c3','linh','Diagram link is on the notebook page.',null,600000),
+  seed(10,'c3','truc','Got it, thanks.',null,660000)
+].forEach(function(m){S.msgs[m.conv].push(m);S.last[m.conv]=m;});
+Object.keys(CONVS).forEach(function(c){CONVS[c].members.forEach(function(u){S.read[c][u]=S.last[c].id;});});
+Object.keys(USERS).forEach(function(u){S.presence[u]={state:'offline',lastSeen:seedAt};S.watchers[u]={};});
+Object.keys(BOT_DEVICES).forEach(function(d){S.presence[BOT_DEVICES[d]]={state:'online',lastSeen:0};Object.keys(CONVS).forEach(function(c){if(CONVS[c].members.indexOf(BOT_DEVICES[d])>=0)S.deliv[c][d]=S.last[c].id;});});
+
+var devices={}; /* real UI devices */
+function devName(id){var d=devices[id];return d?d.user.charAt(0).toUpperCase()+d.user.slice(1)+'·'+d.kind:(BOT_DEVICES[id]?USERS[BOT_DEVICES[id]].name+'·bot':id)}
+function convName(c,me){var cv=CONVS[c];if(cv.type==='group')return cv.name;var o=cv.members.filter(function(u){return u!==me})[0];return USERS[o].name}
+function userDevices(u){var r=[];Object.keys(devices).forEach(function(d){if(devices[d].user===u)r.push(d)});Object.keys(BOT_DEVICES).forEach(function(d){if(BOT_DEVICES[d]===u)r.push(d)});return r}
+function userConnected(u){return userDevices(u).some(function(d){return BOT_DEVICES[d]||S.routes[d]})}
+function userDeliv(c,u){var m=0;userDevices(u).forEach(function(d){m=Math.max(m,S.deliv[c][d]||0)});return m}
+function preview(m){return m.media?(m.media.kind==='image'?'Photo':m.media.name):m.body}
+
+/* ---------- server ---------- */
+function sendTo(devId,frame){ /* server → device over the socket; lost if the radio is off */
+  var d=devices[devId];
+  if(!d)return;
+  hop(function(){ if(d.net&&d.conn==='online')d.recv(frame); else trace('lost',frame.t+' → '+devName(devId)+': socket write to a dead radio'); });
+}
+function cursorsFrame(c){var cv=CONVS[c],r={},dv={};cv.members.forEach(function(u){r[u]=S.read[c][u]||0;dv[u]=userDeliv(c,u)});return {t:'cursors',conv:c,read:r,deliv:dv}}
+function pushCursors(c,extraDevs){
+  var targets={};
+  Object.keys(S.open).forEach(function(d){if(S.open[d]===c&&S.routes[d])targets[d]=true});
+  (extraDevs||[]).forEach(function(d){if(S.routes[d])targets[d]=true});
+  var ids=Object.keys(targets);
+  if(ids.length)trace('receipt','cursors '+c+' → '+ids.map(devName).join(', ')+' (devices with the chat open)');
+  ids.forEach(function(d){sendTo(d,cursorsFrame(c))});
+}
+function presenceFrame(u){var p=S.presence[u];return {t:'presence',user:u,state:p.state==='online'?'online':'offline',lastSeen:p.lastSeen}}
+function publishPresence(u){
+  var ws=Object.keys(S.watchers[u]).filter(function(d){return S.routes[d]});
+  var p=S.presence[u];
+  trace('presence','PUBLISH pres:'+u+' '+p.state+(p.state==='offline'?' last_seen='+fmt(p.lastSeen):'')+' → '+(ws.length?ws.map(devName).join(', '):'no watchers'));
+  ws.forEach(function(d){sendTo(d,presenceFrame(u))});
+}
+function setOnline(u){
+  var p=S.presence[u];
+  if(p.state==='online')return;
+  if(p.state==='pending'){p.state='online';p.timer=null;trace('presence',u+': reconnected inside the 5 s debounce, nothing published');return;}
+  p.state='online';publishPresence(u);
+}
+function routeDead(devId,reason){
+  if(!S.routes[devId])return;
+  delete S.routes[devId];
+  delete S.open[devId];
+  Object.keys(S.watchers).forEach(function(u){delete S.watchers[u][devId]});
+  var d=devices[devId];
+  trace('hb',devName(devId)+' '+reason+' → DEL route:'+d.user+':'+devId);
+  if(!userConnected(d.user)){
+    var p=S.presence[d.user];p.state='pending';
+    trace('presence',d.user+': last device gone → pending-offline, 5 s debounce');
+    var token=p.timer={};
+    at(5000,function(){ if(p.timer!==token||p.state!=='pending')return; p.state='offline';p.lastSeen=sim-10000-5000;p.timer=null;publishPresence(d.user); });
+  } else trace('presence',d.user+' still has another device connected; presence unchanged');
+}
+var server={
+  connect:function(dev,hello){
+    S.routes[dev.id]={lastPong:sim};
+    trace('hb','hello from '+devName(dev.id)+' cursor='+hello.cursor+' → SET route:'+dev.user+':'+dev.id);
+    setOnline(dev.user);
+    var q=S.sq[dev.id]||[], missed=q.filter(function(e){return e.sid>hello.cursor});
+    if(missed.length){
+      trace('queue','XRANGE sq:'+dev.id+' ('+hello.cursor+' + → '+missed.length+' entries, join bodies from the store');
+      var msgs=missed.map(function(e){return {m:S.msgs[e.conv].filter(function(m){return m.id===e.id})[0],sid:e.sid}});
+      sendTo(dev.id,{t:'replay',msgs:msgs});
+    } else trace('queue','sq:'+dev.id+' nothing past cursor '+hello.cursor+'; live traffic starts');
+    sendTo(dev.id,{t:'live'});
+  },
+  frame:function(dev,f){ /* device → server */
+    if(!S.routes[dev.id]&&f.t!=='hello'){trace('lost',f.t+' from '+devName(dev.id)+': no route (socket is dead)');return;}
+    switch(f.t){
+      case 'pong': S.routes[dev.id].lastPong=sim; break;
+      case 'msg': this.store(dev,f); break;
+      case 'ack': /* device advanced its cursor; the server keeps nothing */ trace('queue',devName(dev.id)+' ack sid='+f.sid+' (device-owned cursor; server stores nothing)'); break;
+      case 'delivered': S.deliv[f.conv][dev.id]=Math.max(S.deliv[f.conv][dev.id]||0,f.id); trace('receipt','delivered '+f.conv+' ≤ #'+f.id+' by '+devName(dev.id)); pushCursors(f.conv); break;
+      case 'read': {
+        var prev=S.read[f.conv][dev.user]||0; if(f.id<=prev){break;}
+        S.read[f.conv][dev.user]=f.id;
+        trace('receipt','read_cursors['+f.conv+']['+dev.user+'] = max(prev,#'+f.id+')');
+        var others=userDevices(dev.user).filter(function(d){return d!==dev.id&&S.routes[d]});
+        if(others.length)trace('push','read_cursor → '+others.map(devName).join(', ')+' (clears their badge)');
+        others.forEach(function(d){sendTo(d,{t:'read_cursor',conv:f.conv,id:f.id})});
+        pushCursors(f.conv);
+        break; }
+      case 'open': if(f.conv)S.open[dev.id]=f.conv; else delete S.open[dev.id]; if(f.conv)sendTo(dev.id,cursorsFrame(f.conv)); break;
+      case 'watch': {
+        Object.keys(S.watchers).forEach(function(u){delete S.watchers[u][dev.id]});
+        f.users.forEach(function(u){S.watchers[u][dev.id]=true;sendTo(dev.id,presenceFrame(u))});
+        if(f.users.length)trace('presence',devName(dev.id)+' watches '+f.users.join(', ')+' → current state replied');
+        break; }
+    }
+  },
+  store:function(dev,f){
+    var key=dev.user+'|'+f.cid;
+    if(S.dedup[key]){trace('dedup','('+dev.user+', '+f.cid+') already stored as #'+S.dedup[key]+' → same ack, no second row');sendTo(dev.id,{t:'ack',cid:f.cid,id:S.dedup[key]});return;}
+    var id=nextId(), cv=CONVS[f.conv];
+    var m={id:id,conv:f.conv,from:dev.user,body:f.body,replyTo:f.replyTo||null,media:f.media||null,at:sim,cid:f.cid};
+    S.msgs[f.conv].push(m);S.last[f.conv]=m;S.dedup[key]=id;
+    trace('store','INSERT messages('+f.conv+', '+(f.conv==='c2'?'group':'dm')+') #'+id+' from '+dev.user+(f.replyTo?' reply_to=#'+f.replyTo:'')+(f.media?' media_key='+f.media.key:''));
+    trace('ack','→ '+devName(dev.id)+' {cid:'+f.cid.slice(0,8)+', id:#'+id+'}');
+    sendTo(dev.id,{t:'ack',cid:f.cid,id:id});
+    S.read[f.conv][dev.user]=Math.max(S.read[f.conv][dev.user]||0,id);
+    S.deliv[f.conv][dev.id]=Math.max(S.deliv[f.conv][dev.id]||0,id);
+    /* fan-out on write: every member device except the sending one */
+    var targets=[];cv.members.forEach(function(u){userDevices(u).forEach(function(d){if(d!==dev.id)targets.push(d)})});
+    var online=[],offline=[],bots=[];
+    targets.forEach(function(d){
+      if(BOT_DEVICES[d]){bots.push(d);return;}
+      var sid=++S.sqSeq;(S.sq[d]=S.sq[d]||[]).push({sid:sid,id:id,conv:f.conv});
+      if(S.routes[d]){online.push(d);sendTo(d,{t:'msg',m:m,sid:sid});}
+      else offline.push(d);
+    });
+    trace('queue','XADD sq:{device} #'+id+' × '+(online.length+offline.length)+' devices'+(bots.length?' (+'+bots.length+' scripted members)':''));
+    if(online.length)trace('push','#'+id+' → '+online.map(devName).join(', ')+' over the socket');
+    offline.forEach(function(d){
+      trace('apns','#'+id+' → '+devName(d)+': no route → push hint {conv, id, from}, no body');
+      devices[d].pushHint({conv:f.conv,id:id,from:dev.user});
+    });
+    bots.forEach(function(d){botReceive(d,m)});
+    pushCursors(f.conv);
+  },
+  summaries:function(dev){
+    trace('http','GET /conversations?since='+(dev.listCursor?fmt(dev.listCursor):'0')+' ← '+devName(dev.id));
+    var out={};Object.keys(CONVS).forEach(function(c){if(CONVS[c].members.indexOf(dev.user)<0)return;var l=S.last[c];out[c]={last:l.id,preview:preview(l),from:l.from,at:l.at,myRead:S.read[c][dev.user]||0,unread:S.msgs[c].filter(function(m){return m.id>(S.read[c][dev.user]||0)&&m.from!==dev.user}).length};});
+    return out;
+  },
+  history:function(dev,c){trace('http','GET /conversations/'+c+'/messages?limit=50 ← '+devName(dev.id)+' (bucket '+new Date(wall0).getFullYear()+String(new Date(wall0).getMonth()+1).padStart(2,'0')+')');return S.msgs[c].slice(-50)},
+  mediaIntent:function(dev,media){
+    trace('http','POST /media/intent {size:'+mb(media.size)+', mime:'+media.mime+'} ← '+devName(dev.id));
+    if(media.size>10*1024*1024){trace('media','413: '+mb(media.size)+' > 10 MB cap; no upload link minted');return null;}
+    var key='ap-southeast-1/'+new Date(wall0).getFullYear()+'/'+String(new Date(wall0).getMonth()+1).padStart(2,'0')+'/'+Math.random().toString(16).slice(2,10);
+    trace('media','pre-signed PUT, 10 min, content-length='+media.size+' → '+key);
+    return key;
+  },
+  mediaUrl:function(dev,m){
+    var cdn=CONVS[m.conv].type==='group';
+    trace('http','GET /media/'+m.media.key.split('/').pop()+'/url ← '+devName(dev.id)+' → member of '+m.conv+', signed 1 h, host='+(cdn?'cdn':'bucket')+' ('+(cdn?'group: CDN in front':'1:1: straight to the bucket')+')');
+  },
+  tick:function(){
+    /* heartbeat: ping every 5 s, sweeper every 1 s */
+    var live=Object.keys(S.routes).filter(function(d){return !BOT_DEVICES[d]});   /* scripted members have no socket to sweep */
+    if(sim-(this._ping||-1e9)>=5000){this._ping=sim;live.forEach(function(d){sendTo(d,{t:'ping'})});}
+    if(sim-(this._sweep||-1e9)>=1000){this._sweep=sim;live.forEach(function(d){if(sim-S.routes[d].lastPong>10000)routeDead(d,'no pong for 10 s (two misses)');});}
+  }
+};
+function mb(n){return n>=1024*1024?(n/1048576).toFixed(1)+' MB':Math.round(n/1024)+' KB'}
+
+/* ---------- scripted members ---------- */
+var botLines=['Agreed.','Which cursor moves on that, device or server?','Put that in the ADR.','Reading now.','That matches §4.2.'];
+var botLine=0;
+function botReceive(d,m){
+  var u=BOT_DEVICES[d], c=m.conv;
+  S.deliv[c][d]=Math.max(S.deliv[c][d]||0,m.id);
+  var delay={C1:3000,D1:6000,E1:9000}[d];
+  at(delay,function(){
+    if((S.read[c][u]||0)>=m.id)return;
+    S.read[c][u]=m.id;trace('receipt',USERS[u].name+' (scripted) read '+c+' ≤ #'+m.id);pushCursors(c);
+  });
+  if(d==='C1'&&c==='c2'&&!m.media){
+    at(3400,function(){
+      var bot={id:'C1',user:'linh'};
+      /* a scripted member sends like any device: route is implicit for bots */
+      S.routes.C1=S.routes.C1||{lastPong:sim};
+      server.store(bot,{t:'msg',cid:'bot-'+Math.random().toString(16).slice(2),conv:'c2',body:botLines[botLine++%botLines.length],replyTo:m.id});
+    });
+  }
+}
+S.routes.C1={lastPong:0};S.routes.D1={lastPong:0};S.routes.E1={lastPong:0};
+
+/* ---------- client device ---------- */
+function Device(id,user,kind){
+  this.id=id;this.user=user;this.kind=kind;
+  this.net=true;this.conn='offline';this.cursor=0;this.lastPing=0;this.backoff=1000;this.retryAt=null;
+  this.msgs={};this.loaded={};this.convs={};this.readCur={};this.cursors={};this.presence={};
+  this.screen=kind==='laptop'?'c1':'list';this.draft='';this.replyTo=null;this.tray=[];this.outbox=[];
+  this.detail=null;this.attachOpen=false;this.toast=null;this.syncing=0;this.stick=true;
+}
+Device.prototype={
+  send:function(f){var self=this;if(!this.net){trace('lost',f.t+' from '+devName(this.id)+': radio off, frame never leaves the device');return;}hop(function(){server.frame(self,f)});},
+  connect:function(){
+    var self=this;
+    if(!this.net)return;
+    this.conn='reconnecting';
+    var sums=server.summaries(this);
+    Object.keys(sums).forEach(function(c){self.convs[c]=sums[c];self.readCur[c]=Math.max(self.readCur[c]||0,sums[c].myRead);});
+    this.listCursor=sim;
+    dirty();
+    hop(function(){server.connect(self,{cursor:self.cursor});self.conn='online';self.lastPing=sim;self.backoff=1000;self.sendWatch();if(self.openConv())self.send({t:'open',conv:self.openConv()});self.flushOutbox();dirty();});
+  },
+  recv:function(f){
+    var self=this;
+    switch(f.t){
+      case 'ping': this.lastPing=sim; this.send({t:'pong'}); break;
+      case 'live': if(this._syncLeft>0){this._liveDeferred=true;break;}this.goLive();break;
+      case 'replay': this.syncing=f.msgs.length;this._syncLeft=f.msgs.length;this._rx={};dirty();f.msgs.forEach(function(e,i){at(120*(i+1),function(){self.ingest(e.m,e.sid)});});break;
+      case 'msg': this.ingest(f.m,f.sid);break;
+      case 'ack': {var o=this.outbox.filter(function(x){return x.cid===f.cid})[0];if(!o)break;var had=this.msgs[o.conv]&&this.msgs[o.conv].some(function(m){return m.id===f.id});o.status='sent';o.id=f.id;if(!had){var m={id:f.id,conv:o.conv,from:this.user,body:o.body,replyTo:o.replyTo,media:o.media,at:sim,cid:o.cid};this.addMsg(m);}this.outbox=this.outbox.filter(function(x){return x.cid!==f.cid});dirty();break;}
+      case 'cursors': this.cursors[f.conv]={read:f.read,deliv:f.deliv};dirty();break;
+      case 'read_cursor': this.readCur[f.conv]=Math.max(this.readCur[f.conv]||0,f.id);this.tray=this.tray.filter(function(h){return h.conv!==f.conv});dirty();break;
+      case 'presence': this.presence[f.user]={state:f.state,lastSeen:f.lastSeen};dirty();break;
+    }
+  },
+  ingest:function(m,sid){
+    if(sid<=this.cursor){trace('dedup',devName(this.id)+' already has sid '+sid+' (#'+m.id+'), dropped');return;}
+    this.cursor=sid;
+    var dup=this.addMsg(m);
+    if(this.openConv()===m.conv)this.tray=this.tray.filter(function(h){return h.conv!==m.conv});
+    if(!dup&&m.from!==this.user){
+      if(this.syncing){this._rx[m.conv]=m.id;}   /* receipts coalesced per batch during replay */
+      else this.receipts(m.conv,m.id);
+    }
+    if(this.readCur[m.conv]===undefined)this.readCur[m.conv]=0;
+    if(this.syncing&&--this._syncLeft<=0&&this._liveDeferred){this._liveDeferred=false;this.goLive();}
+    dirty();
+  },
+  receipts:function(c,id){
+    this.send({t:'delivered',conv:c,id:id});
+    if(this.openConv()===c){this.readCur[c]=id;this.send({t:'read',conv:c,id:id});}
+  },
+  goLive:function(){
+    var self=this;
+    if(this.syncing){
+      this.send({t:'ack',sid:this.cursor});
+      var convs=Object.keys(this._rx||{});
+      if(convs.length)trace('receipt',devName(this.id)+' sends one delivered'+(this.openConv()?'/read':'')+' receipt per conversation for the batch ('+convs.join(', ')+'), not one per message');
+      convs.forEach(function(c){self.receipts(c,self._rx[c])});
+      trace('note',devName(this.id)+' replayed '+this.syncing+' missed message'+(this.syncing>1?'s':'')+', no gap, no duplicates; live traffic now');
+    }
+    this.syncing=0;this._rx={};dirty();
+  },
+  addMsg:function(m){
+    var list=this.msgs[m.conv]=this.msgs[m.conv]||[];
+    if(list.some(function(x){return x.id===m.id})){return true;}
+    list.push(m);list.sort(function(a,b){return a.id-b.id});
+    var cv=this.convs[m.conv]=this.convs[m.conv]||{};
+    if(!cv.last||m.id>cv.last){cv.last=m.id;cv.preview=preview(m);cv.from=m.from;cv.at=m.at;}
+    if(m.from===this.user)this.readCur[m.conv]=Math.max(this.readCur[m.conv]||0,m.id);
+    return false;
+  },
+  openConv:function(){return this.screen==='list'?null:this.screen},
+  open:function(c){
+    var self=this;
+    this.screen=c;this.detail=null;this.replyTo=null;this.attachOpen=false;
+    this.tray=this.tray.filter(function(h){return h.conv!==c});
+    if(!this.loaded[c]){this.loaded[c]=true;server.history(this,c).forEach(function(m){self.addMsg(m)});}
+    var last=this.convs[c]&&this.convs[c].last||0;
+    if(last>(this.readCur[c]||0)){this.readCur[c]=last;this.send({t:'read',conv:c,id:last});}
+    this.send({t:'open',conv:c});
+    this.sendWatch();this.stick=true;dirty();
+  },
+  back:function(){this.screen='list';this.send({t:'open',conv:null});this.sendWatch();dirty();},
+  watching:function(){
+    var self=this,set={};
+    var c=this.openConv();
+    if(c)CONVS[c].members.forEach(function(u){if(u!==self.user)set[u]=true});
+    if(!c||this.kind==='laptop')Object.keys(this.convs).forEach(function(k){if(CONVS[k].type==='dm')CONVS[k].members.forEach(function(u){if(u!==self.user)set[u]=true})});
+    return Object.keys(set);
+  },
+  sendWatch:function(){var w=this.watching();if(w.join()!==(this._w||''))this.send({t:'watch',users:w});this._w=w.join();},
+  compose:function(body,media){
+    var c=this.openConv();if(!c)return;
+    var o={cid:crypto.randomUUID?crypto.randomUUID():Math.random().toString(16).slice(2)+Math.random().toString(16).slice(2),conv:c,body:body,replyTo:this.replyTo,media:media||null,status:'pending',at:sim,lastTry:-1e9};
+    this.outbox.push(o);this.replyTo=null;this.draft='';this.stick=true;dirty();
+    if(!media)this.flushOutbox();
+  },
+  flushOutbox:function(){
+    var self=this;
+    this.outbox.forEach(function(o){
+      if(o.status==='uploading')return;
+      if(self.conn!=='online'||sim-o.lastTry<5000)return;
+      var retry=o.lastTry>-1e8;
+      o.lastTry=sim;
+      if(retry)trace('note',devName(self.id)+' retries unacked '+o.cid.slice(0,8)+' with the same client_msg_id');
+      self.send({t:'msg',cid:o.cid,conv:o.conv,body:o.body,replyTo:o.replyTo,media:o.media});
+    });
+  },
+  pushHint:function(h){
+    var self=this;
+    if(this.net){this.tray.push(h);dirty();}
+    else{ /* the OS delivers the push when the radio is back */
+      this._pending=(this._pending||[]);this._pending.push(h);
+    }
+  },
+  attach:function(kind){
+    var self=this,c=this.openConv();
+    this.attachOpen=false;
+    var spec={photo:{name:'IMG_2041.jpg',mime:'image/jpeg',size:4.2*1048576,comp:480*1024,kind:'image'},video:{name:'arch-v1.mp4',mime:'video/mp4',size:9.8*1048576,kind:'video'},file:{name:'estimation.xlsx',mime:'application/vnd.ms-excel',size:12.4*1048576,kind:'file'}}[kind];
+    var media={name:spec.name,mime:spec.mime,size:spec.comp||spec.size,kind:spec.kind,orig:spec.size};
+    if(spec.comp)trace('media',devName(this.id)+' compresses '+spec.name+' on the device: '+mb(spec.size)+' → '+mb(spec.comp)+' (sender could choose "send original")');
+    var key=server.mediaIntent(this,media);
+    if(!key){this.toast='Over 10 MB. The file was not sent; nothing was uploaded.';dirty();at(7000,function(){self.toast=null;dirty()});return;}
+    media.key=key;
+    this.compose('',media);
+    var o=this.outbox[this.outbox.length-1];o.status='uploading';o.prog=0;
+    var ms=Math.max(1200,media.size/(4*1048576)*1000), steps=12, i=0;
+    trace('media',devName(this.id)+' PUT '+mb(media.size)+' → bucket (bypasses chat servers), ~'+(ms/1000).toFixed(1)+' s');
+    function step(){i++;o.prog=i/steps;dirty();if(i<steps){if(self.net)at(ms/steps,step);else{trace('lost','upload from '+devName(self.id)+' stalls: radio off; resumes when back');var w=function(){if(self.net)at(ms/steps,step);else at(500,w)};at(500,w);}}else{trace('media','bucket 200 for '+media.key+'; now the message is sent');o.status='pending';self.flushOutbox();}}
+    at(ms/steps,step);
+  },
+  download:function(m){
+    var self=this;m._dl=m._dl||{};var st=m._dl[this.id]={prog:0};
+    server.mediaUrl(this,m);
+    var steps=10,i=0,ms=Math.max(900,m.media.size/(6*1048576)*1000);
+    function step(){i++;st.prog=i/steps;dirty();if(i<steps)at(ms/steps,step);else{st.done=true;trace('media',devName(self.id)+' fetched '+mb(m.media.size)+' from '+(CONVS[m.conv].type==='group'?'CDN':'bucket')+', sha256 verified');}}
+    at(ms/steps,step);
+  },
+  status:function(m){ /* derived from cursors, never stored */
+    if(m.from!==this.user)return null;
+    var cv=CONVS[m.conv],cur=this.cursors[m.conv];if(!cur)return 'sent';
+    var others=cv.members.filter(function(u){return u!==m.from});
+    if(others.every(function(u){return (cur.read[u]||0)>=m.id}))return 'read';
+    if(others.every(function(u){return (cur.deliv[u]||0)>=m.id}))return 'delivered';
+    return 'sent';
+  },
+  tick:function(){
+    var self=this;
+    if(this.net&&this._pending&&this._pending.length){this._pending.forEach(function(h){trace('apns','push hint reaches '+devName(self.id)+' now that the radio is back');self.tray.push(h)});this._pending=[];dirty();}
+    if(this.conn==='online'&&sim-this.lastPing>15000){
+      this.conn='reconnecting';this.backoff=1000;this.retryAt=sim+this.jit(this.backoff);
+      trace('hb',devName(this.id)+': no ping for 15 s → socket is half-open, close and reconnect in '+(Math.round((this.retryAt-sim)/100)/10)+' s');dirty();
+    }
+    if(this.conn==='reconnecting'&&this.retryAt!==null&&sim>=this.retryAt){
+      if(this.net){this.retryAt=null;trace('http','GET /chat-servers ← '+devName(this.id)+' → least-loaded node; then WS connect');this.connect();}
+      else{this.backoff=Math.min(30000,this.backoff*2);this.retryAt=sim+this.jit(this.backoff);trace('hb',devName(this.id)+' reconnect failed (no network); next try in '+(Math.round((this.retryAt-sim)/100)/10)+' s');dirty();}
+    }
+    if(this.conn==='online')this.flushOutbox();
+  },
+  jit:function(ms){return Math.round(ms*(0.7+Math.random()*0.6))},
+  setNet:function(on){
+    if(this.net===on)return;this.net=on;
+    trace('note',devName(this.id)+': network '+(on?'restored':'dropped (unclean: no close frame, nobody is told)'));
+    if(on&&this.conn==='reconnecting'&&this.retryAt===null){this.retryAt=sim;}
+    dirty();
+  }
+};
+
+/* ---------- rendering ---------- */
+var bench=document.getElementById('bench'), isDirty=true;
+function dirty(){isDirty=true}
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function presenceText(d,u){var p=d.presence[u];if(!p)return '';if(p.state==='online')return 'online';return p.lastSeen>seedAt?'last seen '+fmtShort(p.lastSeen):'last seen earlier today'}
+function ticks(st){if(!st)return '';if(st==='pending')return '<span class="tick" title="in outbox, not yet acknowledged">◷</span>';if(st==='sent')return '<span class="tick" title="stored, acknowledged">✓</span>';if(st==='delivered')return '<span class="tick" title="delivered to every member">✓✓</span>';return '<span class="tick read" title="read by every member">✓✓</span>'}
+function renderQuote(d,m){
+  if(!m.replyTo)return '';
+  var p=(d.msgs[m.conv]||[]).filter(function(x){return x.id===m.replyTo})[0];
+  if(!p)return '<div class="q"><i>Message unavailable</i></div>';
+  return '<div class="q"><b>'+esc(USERS[p.from].name)+'</b> '+esc((preview(p)||'').slice(0,60))+'</div>';
+}
+function renderMedia(d,m,o){
+  var md=m.media,mine=m.from===d.user;
+  var ic='<span class="ic'+(md.kind==='image'?' img':'')+'">'+(md.kind==='image'?'':md.kind==='video'?'MP4':'XLS')+'</span>';
+  var h='<div class="media">'+ic+'<div><div class="nm">'+esc(md.kind==='image'?'Photo':md.name)+'</div><small>'+mb(md.size)+(md.orig&&md.orig!==md.size?' · compressed from '+mb(md.orig):'')+'</small>';
+  if(o&&o.status==='uploading')h+='<div class="prog"><i style="width:'+Math.round(o.prog*100)+'%"></i></div><small>uploading to the bucket</small>';
+  else if(!mine){var st=m._dl&&m._dl[d.id];if(!st)h+='<button type="button" data-dl="'+m.id+'">Download</button>';else if(!st.done)h+='<div class="prog"><i style="width:'+Math.round(st.prog*100)+'%"></i></div>';else h+='<small>downloaded</small>';}
+  return h+'</div></div>';
+}
+function renderMsgs(d,c){
+  var cv=CONVS[c],list=(d.msgs[c]||[]),h='';
+  if(!list.length)h+='<div class="sys">No messages yet</div>';
+  var lastDay=null;
+  list.forEach(function(m){
+    var mine=m.from===d.user,st=d.status(m);
+    h+='<div class="m '+(mine?'out':'in')+(mine&&cv.type==='group'?' grp':'')+'" data-id="'+m.id+'">';
+    h+='<div class="act"><button type="button" data-reply="'+m.id+'">Reply</button>'+(mine&&cv.type==='group'?'<button type="button" data-detail="'+m.id+'">Who read</button>':'')+'</div>';
+    if(!mine&&cv.type==='group')h+='<div class="snd">'+esc(USERS[m.from].name)+'</div>';
+    h+=renderQuote(d,m);
+    if(m.media)h+=renderMedia(d,m,null);
+    if(m.body)h+=esc(m.body);
+    h+='<div class="meta"><span>'+fmtShort(m.at)+'</span>'+ticks(st)+'</div></div>';
+  });
+  d.outbox.filter(function(o){return o.conv===c}).forEach(function(o){
+    h+='<div class="m out pend">'+renderQuote(d,{conv:c,replyTo:o.replyTo})+(o.media?renderMedia(d,{from:d.user,conv:c,media:o.media},o):'')+esc(o.body)+'<div class="meta"><span>'+fmtShort(o.at)+'</span>'+ticks('pending')+'</div></div>';
+  });
+  return h;
+}
+function renderChat(d,c){
+  var cv=CONVS[c],h='<div class="chat">';
+  var sub;
+  if(cv.type==='dm'){var o=cv.members.filter(function(u){return u!==d.user})[0];var pt=presenceText(d,o);sub='<div class="pr'+(pt==='online'?' on':'')+'">'+esc(pt||'…')+'</div>';}
+  else{var on=cv.members.filter(function(u){return u!==d.user&&d.presence[u]&&d.presence[u].state==='online'}).map(function(u){return USERS[u].name});sub='<div class="pr">'+cv.members.length+' members'+(on.length?' · online: '+on.join(', '):'')+'</div>';}
+  h+='<div class="chead">'+(d.kind==='phone'?'<button type="button" class="back" data-back aria-label="Back to chats">‹</button>':'')+'<div class="avatar'+(cv.type==='group'?' g':'')+'">'+esc(convName(c,d.user).slice(0,cv.type==='group'?2:1))+'</div><div><div class="nm">'+esc(convName(c,d.user))+'</div>'+sub+'</div></div>';
+  h+='<div class="msgs" data-msgs>'+renderMsgs(d,c)+'</div>';
+  h+='<div class="composer">';
+  if(d.replyTo){var p=(d.msgs[c]||[]).filter(function(x){return x.id===d.replyTo})[0];h+='<div class="replybar">Replying to <b>'+esc(p?USERS[p.from].name:'')+'</b> '+esc(p?(preview(p)||'').slice(0,40):'')+'<button type="button" data-cancel-reply aria-label="Cancel reply">✕</button></div>';}
+  h+='<div class="cline"><button type="button" data-attach aria-label="Attach">＋</button><input type="text" placeholder="Message" value="'+esc(d.draft)+'" data-input aria-label="Message"><button type="button" class="send" data-send>Send</button>';
+  if(d.attachOpen)h+='<div class="attach-menu"><button type="button" data-kind="photo">Photo<small>4.2 MB, compressed on the device to 480 KB</small></button><button type="button" data-kind="video">Video<small>arch-v1.mp4, 9.8 MB, sent as-is</small></button><button type="button" data-kind="file">Spreadsheet<small>12.4 MB, over the cap</small></button></div>';
+  h+='</div></div>';
+  if(d.detail!==null){var m=(d.msgs[c]||[]).filter(function(x){return x.id===d.detail})[0];var cur=d.cursors[c]||{read:{},deliv:{}};if(m){h+='<div class="detail"><h4>Message #'+m.id+'</h4>';cv.members.filter(function(u){return u!==d.user}).forEach(function(u){var s=(cur.read[u]||0)>=m.id?'read':(cur.deliv[u]||0)>=m.id?'deliv':'sent';h+='<div><span>'+esc(USERS[u].name)+'</span><span class="st '+s+'">'+(s==='read'?'read':s==='deliv'?'delivered':'not yet delivered')+'</span></div>';});h+='<button type="button" data-close-detail>Close</button></div>';}}
+  if(d.toast)h+='<div class="toast" role="alert">'+esc(d.toast)+'</div>';
+  return h+'</div>';
+}
+function renderList(d){
+  var h='<div class="list"><h3>Chats</h3>';
+  var ids=Object.keys(d.convs).sort(function(a,b){return (d.convs[b].at||0)-(d.convs[a].at||0)});
+  ids.forEach(function(c){
+    var cv=CONVS[c],s=d.convs[c],unread=(s.last||0)>(d.readCur[c]||0);
+    var n=unread?Math.max(1,(d.msgs[c]||[]).filter(function(m){return m.id>(d.readCur[c]||0)&&m.from!==d.user}).length||s.unread||1):0;
+    var o=cv.type==='dm'?cv.members.filter(function(u){return u!==d.user})[0]:null;
+    var on=o&&d.presence[o]&&d.presence[o].state==='online';
+    h+='<button type="button" class="row'+(unread?' unread':'')+(d.screen===c?' sel':'')+'" data-open="'+c+'"><span class="avatar'+(cv.type==='group'?' g':'')+'">'+esc(convName(c,d.user).slice(0,cv.type==='group'?2:1))+(o?'<span class="dot'+(on?'':' off')+'"></span>':'')+'</span><span><span class="nm">'+esc(convName(c,d.user))+'</span><span class="pv">'+esc((s.from===d.user?'You: ':cv.type==='group'&&s.from?USERS[s.from].name+': ':'')+(s.preview||''))+'</span></span><span class="tm">'+(s.at?fmtShort(s.at):'')+(unread?'<br><span class="badge">'+n+'</span>':'')+'</span></button>';
+  });
+  return h+'</div>';
+}
+function renderDevice(d){
+  var h='<div class="dhead"><b>'+esc(USERS[d.user].name)+'</b><span class="who">'+d.kind+'</span>';
+  var cs=d.conn==='online'?'':d.conn==='reconnecting'?' re':' off';
+  var ct=d.conn==='online'?'connected':d.conn==='reconnecting'?(d.net?'reconnecting':'no network'):'offline';
+  h+='<span class="conn'+cs+'">'+ct+'</span><button type="button" class="netbtn'+(d.net?'':' down')+'" data-net>'+(d.net?'Drop network':'Restore network')+'</button></div>';
+  h+='<div class="tray">'+d.tray.map(function(x,i){return '<div class="hint"><b>'+esc(USERS[x.from].name)+'</b><small>new message in '+esc(convName(x.conv,d.user))+' · no body in the push</small><button type="button" data-hint="'+i+'">Open</button></div>'}).join('')+'</div>';
+  if(d.syncing)h+='<div class="banner sync">Syncing '+d.syncing+' missed message'+(d.syncing>1?'s':'')+' from cursor '+d.cursor+'…</div>';
+  else if(d.conn==='reconnecting')h+='<div class="banner'+(d.net?'':' off')+'">'+(d.net?'Reconnecting'+(d.retryAt?' in '+Math.max(0,Math.round((d.retryAt-sim)/1000))+' s':'…'):'No network. Messages you send wait in the outbox.')+'</div>';
+  else if(!d.net)h+='<div class="banner off">Radio off. The socket looks alive to both sides for a few more seconds.</div>';
+  h+='<div class="screen">';
+  if(d.kind==='laptop')h+=renderList(d)+renderChat(d,d.screen);
+  else h+=d.screen==='list'?renderList(d):renderChat(d,d.screen);
+  return h+'</div>';
+}
+var devOrder=['A1','A2','B1'];
+function render(){
+  if(!isDirty)return;isDirty=false;
+  var focus=document.activeElement,focusDev=focus&&focus.closest&&focus.closest('.device')?focus.closest('.device').dataset.dev:null,isInput=focus&&focus.hasAttribute&&focus.hasAttribute('data-input');
+  devOrder.forEach(function(id){
+    var d=devices[id],el=document.querySelector('[data-dev="'+id+'"]');
+    var ms=el.querySelector('[data-msgs]');
+    if(ms)d.stick=ms.scrollHeight-ms.scrollTop-ms.clientHeight<40||d.stick;
+    el.innerHTML=renderDevice(d);
+    var ms2=el.querySelector('[data-msgs]');if(ms2&&d.stick){ms2.scrollTop=ms2.scrollHeight;}
+    d.stick=false;
+    if(focusDev===id&&isInput){var inp=el.querySelector('[data-input]');if(inp){inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);}}
+  });
+}
+function onBench(e){
+  var dev=e.target.closest('.device');if(!dev)return;var d=devices[dev.dataset.dev];
+  var t=e.target.closest('button');if(!t)return;
+  if(t.hasAttribute('data-net')){d.setNet(!d.net);return;}
+  if(t.hasAttribute('data-open')){d.open(t.dataset.open);return;}
+  if(t.hasAttribute('data-back')){d.back();return;}
+  if(t.hasAttribute('data-send')){var v=d.draft.trim();if(v)d.compose(v);return;}
+  if(t.hasAttribute('data-attach')){d.attachOpen=!d.attachOpen;dirty();return;}
+  if(t.hasAttribute('data-kind')){d.attach(t.dataset.kind);return;}
+  if(t.hasAttribute('data-reply')){d.replyTo=+t.dataset.reply;d.attachOpen=false;dirty();at(0,function(){var i=dev.querySelector('[data-input]');if(i)i.focus()});return;}
+  if(t.hasAttribute('data-cancel-reply')){d.replyTo=null;dirty();return;}
+  if(t.hasAttribute('data-detail')){d.detail=+t.dataset.detail;dirty();return;}
+  if(t.hasAttribute('data-close-detail')){d.detail=null;dirty();return;}
+  if(t.hasAttribute('data-dl')){var m=(d.msgs[d.openConv()]||[]).filter(function(x){return x.id===+t.dataset.dl})[0];if(m)d.download(m);return;}
+  if(t.hasAttribute('data-hint')){var h=d.tray[+t.dataset.hint];d.tray.splice(+t.dataset.hint,1);d.open(h.conv);return;}
+}
+bench.addEventListener('click',onBench);
+bench.addEventListener('input',function(e){if(e.target.hasAttribute('data-input')){var d=devices[e.target.closest('.device').dataset.dev];d.draft=e.target.value;}});
+bench.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.hasAttribute('data-input')){var d=devices[e.target.closest('.device').dataset.dev];var v=d.draft.trim();if(v)d.compose(v);}});
+bench.addEventListener('click',function(e){var dev=e.target.closest('.device');if(!dev)return;var d=devices[dev.dataset.dev];if(d.attachOpen&&!e.target.closest('.attach-menu')&&!e.target.closest('[data-attach]')){d.attachOpen=false;dirty();}});
+
+/* ---------- build ---------- */
+devices.A1=new Device('A1','truc','phone');
+devices.A2=new Device('A2','truc','laptop');
+devices.B1=new Device('B1','khanh','phone');
+bench.innerHTML='<div class="device phone" data-dev="A1"></div><div class="device laptop" data-dev="A2"></div><div class="device phone" data-dev="B1"></div><aside class="trace"><div class="thead"><b>Server trace</b><span>every hop, in order</span><button type="button" id="clear">Clear</button></div><div class="tl" id="tl" aria-live="polite"></div></aside>';
+tl=document.getElementById('tl');
+document.getElementById('clear').onclick=function(){tl.innerHTML='';traceCount=0;};
+trace('note','Three devices connect. Each sends hello with its cursor; the server registers a route and replies with the current presence of whoever is on screen.');
+devices.A2.loaded.c1=true;server.history(devices.A2,'c1').forEach(function(m){devices.A2.addMsg(m)});
+devOrder.forEach(function(id){devices[id].connect()});
+
+/* speed + clock */
+document.querySelectorAll('[data-speed]').forEach(function(b){b.onclick=function(){SPEED=+b.dataset.speed;document.querySelectorAll('[data-speed]').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});trace('note','Clock now runs at '+SPEED+'×');}});
+var clockEl=document.getElementById('clock');
+setInterval(function(){
+  sim+=100*SPEED;
+  timers.sort(function(a,b){return a.t-b.t});
+  while(timers.length&&timers[0].t<=sim){var x=timers.shift();x.fn();}
+  server.tick();devOrder.forEach(function(id){devices[id].tick()});
+  clockEl.textContent=fmt(sim);
+  if(document.querySelector('.banner')&&!isDirty)dirty();  /* countdown text */
+  render();
+},100);
+
+/* ---------- scenarios ---------- */
+var scenEl=document.getElementById('scen'),statusEl=document.getElementById('scen-status');
+function run(steps){
+  var btns=scenEl.querySelectorAll('button');btns.forEach(function(b){b.disabled=true});
+  var t=0;steps.forEach(function(s){t+=s[0];at(t,function(){if(s[2]){statusEl.textContent=s[2];trace('note',s[2]);}if(s[1])s[1]();});});
+  at(t+500,function(){btns.forEach(function(b){b.disabled=false});statusEl.textContent='Done. Read the trace, then try your own.';});
+}
+var scenarios={
+  offline:function(){var A=devices.A1,B=devices.B1;run([
+    [0,function(){A.open('c1');B.open('c1');},'Both phones have the chat open. Khanh\'s network drops: no close frame, so the server still sees a route.'],
+    [600,function(){B.setNet(false)}],
+    [1500,function(){A.compose('Are you there?')},'Truc sends. Store, ack, queue; the push goes to a dead socket and only the sync queue has it.'],
+    [12000,function(){A.compose('Two missed pings: the server now knows.')},'After 10 s the route is gone. Truc\'s header shows last seen after the 5 s debounce; this message also triggers a push hint.'],
+    [8000,function(){A.compose('Third one, still queued for you.')},'Twenty seconds offline. Three messages wait in sq:B1 as IDs only.'],
+    [3000,function(){B.setNet(true)},'Khanh\'s network is back. The client reconnects with backoff and sends hello with its cursor; the server replays exactly the three.'],
+    [8000,null,'Khanh\'s phone is complete: no gap, no duplicate. Truc\'s ticks turned teal when the replay was read.']
+  ])},
+  multidev:function(){var A=devices.A1,L=devices.A2,B=devices.B1;run([
+    [0,function(){A.back();L.open('c3');B.open('c1');},'Truc\'s phone shows the chat list; the laptop is in another chat. Khanh sends.'],
+    [800,function(){B.compose('Ping from Khanh: unread on both of Truc\'s devices.')}],
+    [2500,function(){L.open('c1')},'Truc opens the chat on the laptop. One read cursor per user: the phone\'s badge clears without being touched, and Khanh\'s tick turns teal.'],
+    [2000,null,'Done: read state is per user, not per device.']
+  ])},
+  group:function(){var A=devices.A1;run([
+    [0,function(){A.open('c2')},'Truc posts in the group. Three scripted members read at 3, 6 and 9 seconds; Khanh\'s phone is where you left it.'],
+    [700,function(){A.compose('Who has read the ADR draft?')}],
+    [1500,function(){A.detail=A.msgs.c2[A.msgs.c2.length-1].id;dirty();},'Click "Who read" on your own bubble: per-member state derived from read cursors, never stored per message.'],
+    [9000,null,'Linh replied with a quoted reply; the quote is resolved by ID on the reading device.']
+  ])},
+  blip:function(){var A=devices.A1,B=devices.B1;run([
+    [0,function(){A.open('c1');B.open('c1');},'Truc\'s phone loses the radio for 3 s, then gets it back. Under 10 s the server never notices; under 5 s a watcher never would.'],
+    [500,function(){A.setNet(false)}],
+    [3000,function(){A.setNet(true)}],
+    [6000,null,'Nothing was published. Khanh\'s header never changed; heartbeats resumed as if nothing happened.']
+  ])}
+};
+scenEl.addEventListener('click',function(e){var b=e.target.closest('button[data-s]');if(b&&!b.disabled)scenarios[b.dataset.s]();});
+})();
+</script>
+</body>
+</html>

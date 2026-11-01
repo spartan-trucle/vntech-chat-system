@@ -8,6 +8,10 @@ at Messenger / WhatsApp scale.
 - [`docs/index.html`](docs/index.html) — the discussion page: requirements with their reasoning and
   challenges, scale numbers, and the tech-stack decision board (open / decided per layer).
   Plain HTML, no build step; open the file or serve `docs/` with any static server.
+- [`docs/prototype/index.html`](docs/prototype/index.html) — **the target, simulated**: a clickable client
+  (Truc on a phone and a laptop, Khanh on a phone, three scripted group members) with a simulated server
+  and a trace of every hop. Drop a network, send, reconnect, read on one device; check the trace against
+  `design.md`. Single file, no backend. Not the protocol prototype: that is the Node.js server in design §Prototype.
 - [`docs/design.md`](docs/design.md) — decisions so far (heartbeat and reconnect, history pagination),
   and [`docs/diagrams/high-level.html`](docs/diagrams/high-level.html), the interactive architecture diagram.
 - [`docs/specification.md`](docs/specification.md) — the brief: requirements, scale, the
