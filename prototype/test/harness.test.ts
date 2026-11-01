@@ -95,7 +95,10 @@ describe('ScriptedClient harness', () => {
       { wait: 10 },
     ]);
     expect(log).toEqual(['after presence']);
-    expect(c.received.map((f) => f.t)).toEqual(['hello_ack', 'presence']);
+    // B6 answers a watch with the current state before the stub above runs: hello_ack, then only presence frames.
+    expect(c.received[0]?.t).toBe('hello_ack');
+    expect(c.received.length).toBeGreaterThanOrEqual(2);
+    expect(c.received.slice(1).every((f) => f.t === 'presence')).toBe(true);
     const tags = c.trace.rows().map((r) => r.tag);
     expect(tags).toContain('note');
     expect(tags).toContain('hello');
