@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 5 (B7 on the lane branch, frame fix requested; B4 B5 B6 in flight; wave 2 goes to C as one range; A3 waiting on the author)
+Last updated: 2026-11-01, report round 6 (B7 frame fix landed d7ea3ea; B4 B5 B6 in flight; wave 2 goes to C as one range; A3 waiting on the author)
 
 ## Epics
 
@@ -20,7 +20,7 @@ Last updated: 2026-11-01, report round 5 (B7 on the lane branch, frame fix reque
 | B4 history + summary (slow path) | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B5 receipts + unread | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B6 presence | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
-| B7 media stub | B | 2 | done on lane (f650565), frame fix requested, C review with the rest of wave 2 | claude/b-prototype-297ab9 @ f650565 | 124 passed (lane), 106 alone | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
+| B7 media stub | B | 2 | done on lane (f650565 + fix d7ea3ea), C review with the rest of wave 2 | claude/b-prototype-297ab9 @ d7ea3ea | 133 passed (lane) | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
 | B3 sync queue replay | B | 3 | todo | feature/B-prototype | | | |
 | B8 scenario suite | B | 4 | todo | feature/B-prototype | | | |
 | B9 real Redis | B | 5 (optional) | todo | | | | |
