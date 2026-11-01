@@ -21,6 +21,7 @@ import type { Message, UserId } from '../protocol.js';
 import { deviceName, USERS } from '../fixtures.js';
 import type { HttpRequest, HttpResponse, ServerContext } from '../server.js';
 import { largestId, smallestId, walkBack, walkForward } from './buckets.js';
+import { previewOf } from './preview.js';
 import { TokenBucket } from './tokenBucket.js';
 
 export interface HistoryOptions {
@@ -127,9 +128,23 @@ function requestLine(req: HttpRequest, keys: string[]): string {
   return `GET ${req.path}${qs ? `?${qs}` : ''}`;
 }
 
-export function registerHistory(ctx: ServerContext): void {
+export function registerHistory(ctx: ServerContext): () => void {
   const opts = resolveHistoryOptions(ctx.moduleOptions['history']);
   const slowPath = new TokenBucket({ capacity: opts.slowPathCapacity, refillPerSecond: opts.slowPathRefillPerSecond, now: () => ctx.clock.now() });
+
+  // ---- summary row (design §4.3): one upsert per store write, before the ack ----
+  // B2 emits `message_stored` right after INSERT and before `msg_ack`, so by the time the
+  // sender holds an ack the chat list already shows the row. One server and monotonic ids
+  // make a plain SET correct; the Redis version compares ids in a Lua script.
+  const offStored = ctx.events.on('message_stored', async ({ message }) => {
+    await ctx.ports.summaries.upsert({
+      conversation_id: message.conversation_id,
+      last_message_id: message.message_id,
+      last_preview: previewOf(message),
+      last_sender: message.sender_id,
+      last_at: message.created_at,
+    });
+  });
 
   /** Identity stand-in (no auth): `user_id` from the query, then membership. */
   const identify = async (req: HttpRequest, conversation_id: string): Promise<{ user_id: UserId; conversation: Conversation; who: string } | HttpResponse> => {
@@ -225,4 +240,8 @@ export function registerHistory(ctx: ServerContext): void {
     const body: JumpResponse = { message, before, after };
     return { status: 200, body };
   }));
+
+  return () => {
+    offStored();
+  };
 }
