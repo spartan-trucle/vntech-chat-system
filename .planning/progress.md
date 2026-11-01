@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 4 (wave 1 merged to main; wave 2 in flight; A3 waiting on the author)
+Last updated: 2026-11-01, report round 5 (B7 on the lane branch, frame fix requested; B4 B5 B6 in flight; wave 2 goes to C as one range; A3 waiting on the author)
 
 ## Epics
 
@@ -20,7 +20,7 @@ Last updated: 2026-11-01, report round 4 (wave 1 merged to main; wave 2 in fligh
 | B4 history + summary (slow path) | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B5 receipts + unread | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B6 presence | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
-| B7 media stub | B | 2 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
+| B7 media stub | B | 2 | done on lane (f650565), frame fix requested, C review with the rest of wave 2 | claude/b-prototype-297ab9 @ f650565 | 124 passed (lane), 106 alone | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
 | B3 sync queue replay | B | 3 | todo | feature/B-prototype | | | |
 | B8 scenario suite | B | 4 | todo | feature/B-prototype | | | |
 | B9 real Redis | B | 5 (optional) | todo | | | | |
@@ -45,6 +45,7 @@ Last updated: 2026-11-01, report round 4 (wave 1 merged to main; wave 2 in fligh
 | B1 | server-side death and client-side mirror rule are independent detections; a blackholed client sees neither close nor terminate |
 | B2 | the bounded push buffer must allow one tick of fan-out above its nominal bound; loopback backpressure needs ~0.5 MB before the writer blocks |
 | B (orchestration) | Agent-tool worktrees are cut from `origin/main`, not the lane branch; every subagent brief must open with a fast-forward onto the lane branch |
+| B7 | the roadmap's `msg` frame omitted `media_size`, `media_mime`, `sha256` from design §6.2; the prototype followed the roadmap and left the row's media columns null. Lesson for the retrospective: the roadmap must quote the design's frame, not paraphrase it |
 
 ## Decisions for the author (A3 queue)
 
