@@ -118,7 +118,11 @@ export interface ServerEvents {
   connection_opened: { conn: Connection };
   /** `hello` parsed, identity bound, route written; `ack` may be amended (e.g. `slow_path`). */
   hello: { conn: Connection; frame: HelloFrame; ack: HelloAckFrame };
-  /** `hello_ack` sent; the connection is in the `replay` phase until every listener returns. */
+  /**
+   * `hello_ack` sent; the connection is in the `replay` phase until every listener returns,
+   * then `live`. Runs beside the connection's frame chain, not inside it: later frames
+   * (acks, the outbox flush) are handled while the listeners run.
+   */
   device_connected: { conn: Connection; frame: HelloFrame };
   /** Entry removed and route deleted; `last_device` is the `SCARD route:{user} → 0` check of §1.5. */
   device_disconnected: { conn: Connection; reason: DisconnectReason; last_device: boolean };
@@ -335,8 +339,13 @@ export async function createChatServer(opts: ChatServerOptions = {}): Promise<Ch
     if (conn.closed) return;
     send(conn, ack);
     conn.phase = 'replay';
-    await events.emit('device_connected', { conn, frame });
-    if (!conn.closed) conn.phase = 'live';
+    // Detached from this connection's frame chain on purpose: the sync module replays in
+    // batches and waits for the device's `ack` of each (design §4.4), so frames sent after
+    // `hello_ack` must keep flowing to their handlers while the listeners run. The flip to
+    // `live` happens in the microtask that follows the last listener's return.
+    void events.emit('device_connected', { conn, frame })
+      .catch((e) => sendError(conn, 'internal', e instanceof Error ? e.message : String(e)))
+      .finally(() => { if (!conn.closed) conn.phase = 'live'; });
   };
 
   const onFrameMessage = async (conn: Connection, raw: string): Promise<void> => {

@@ -123,6 +123,27 @@ describe('chat server core (composition root)', () => {
     expect(server.ctx.connections.byDevice('A1')?.phase).toBe('live');
   });
 
+  test('frames sent after hello_ack reach their handlers while device_connected listeners are still running', async () => {
+    // The sync module replays in batches and waits for the device's ack of each batch (design §4.4),
+    // so an ack must not sit behind the hello in the connection's frame chain.
+    let settle: (() => void) | undefined;
+    const acked = new Promise<void>((resolve) => { settle = resolve; });
+    const order: string[] = [];
+    server.ctx.onFrame('ack', (_conn, f) => { order.push(`ack:${f.up_to_stream_id}`); settle?.(); });
+    server.ctx.events.on('device_connected', async ({ conn }) => {
+      order.push(`replay:${conn.phase}`);
+      await Promise.race([acked, new Promise<void>((r) => setTimeout(r, 500))]);
+      order.push(`drained:${conn.phase}`);
+    });
+    const c = await connect();
+    c.send(hello(DEVICES.trucPhone, '1-0'));
+    await c.next('hello_ack');
+    c.send({ t: 'ack', up_to_stream_id: '9-0' });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(order).toEqual(['replay:replay', 'ack:9-0', 'drained:replay']);
+    expect(server.ctx.connections.byDevice('A1')?.phase).toBe('live');
+  });
+
   test('a clean close removes the entry and the route and says whether it was the last device', async () => {
     const gone: Array<{ device_id: string | undefined; last_device: boolean; reason: string }> = [];
     server.ctx.events.on('device_disconnected', ({ conn, last_device, reason }) => {
