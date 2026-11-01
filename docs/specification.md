@@ -155,7 +155,7 @@ alternative considered and the reason for rejecting it.
 ### 5.7 Presence
 
 - Heartbeat design: interval, timeout, and the cost at 10 M concurrent users, given the 10-second freshness target in F7.
-- Fan-out of presence changes: push to all friends, or pull on demand? Where does the answer change (small friend list vs. a 100 K-member Discord server)?
+- Fan-out of presence changes: decided, subscription only (design §5). Where it changes again: a 100 K-member Discord server, the follow-up product shape.
 
 ### 5.8 Reliability and operations
 

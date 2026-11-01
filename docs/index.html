@@ -215,7 +215,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
 
     <div class="req"><div class="id">F6</div><div><h3>Multi-device sync</h3><p>Up to 5 devices per user share one conversation state.</p></div><div><span class="lbl">Why</span><p>Turns "deliver to user" into "deliver to each device cursor". This is the subtle one.</p></div><div><span class="lbl">Challenge</span><p>Do read receipts sync across the reader's own devices, or only to the sender?</p></div></div>
 
-    <div class="req"><div class="id">F7</div><div><h3>Online indicator, must have</h3><p>Online, offline, or last seen. Visible to contacts within 10 seconds.</p></div><div><span class="lbl">Why</span><p>Presence is the most expensive cheap-looking feature: 10 M heartbeats on a clock.</p></div><div><span class="lbl">Challenge</span><p>Is 10 s a product number or a guess? Each halving roughly doubles heartbeat load.</p></div></div>
+    <div class="req"><div class="id">F7</div><div><h3>Online indicator, must have</h3><p>Online, offline, or last seen, for the people on screen. Detected within 10 s, visible to watchers within 15 s, 5 s debounce.</p></div><div><span class="lbl">Why</span><p>Presence is the most expensive cheap-looking feature, but the cost is in propagation, not detection.</p></div><div><span class="lbl">Challenge</span><p>Answered: delivered by subscription only (argument 10). Still worth asking: does any screen need presence for people <em>not</em> on it?</p></div></div>
 
     <div class="req"><div class="id">F8</div><div><h3>Message status, per member</h3><p>Sent, delivered, read. In groups the sender sees <em>who</em> read, not only how many.</p></div><div><span class="lbl">Why</span><p>Each transition is an event flowing backwards. Per member in a 100-group is 100 read events per message unless they are coalesced.</p></div><div><span class="lbl">Challenge</span><p>Store a receipt per message per member, or one read cursor per member per conversation? Decided: cursor. See design.md §3.</p></div></div>
 
@@ -309,7 +309,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   </article>
 
   <article class="layer">
-    <header><h3>Routing, presence and session state</h3><span class="state open">open</span><p class="q">When a message arrives for Khanh, which server holds Khanh's three connections, and is Khanh online right now?</p></header>
+    <header><h3>Routing, presence and session state</h3><span class="state decided">decided</span><p class="q">When a message arrives for Khanh, which server holds Khanh's three connections, and is Khanh online right now?</p></header>
     <p class="crit">Criteria: sub-millisecond lookups, TTL-based expiry for heartbeats, pub/sub for presence fan-out, survives a node loss without a thundering reconnect.</p>
     <div class="cands">
       <div class="cand lean"><b>Redis (cluster)</b><span>Session map with TTL, presence with TTL, pub/sub for fan-out. One system, well understood. Not a durable store.</span></div>
@@ -317,8 +317,8 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <div class="cand"><b>In-memory on the chat server + gossip</b><span>No external dependency, but every server must know every other's users. Does not scale past a few nodes.</span></div>
     </div>
     <div class="verdict">
-      <div><span class="lbl">Lean</span><p>Redis for user-to-server routing and presence with heartbeat TTL; etcd or the orchestrator for chat-server discovery only.</p></div>
-      <div class="against"><span class="lbl">Strongest case against</span><p>10 M presence writes every heartbeat interval is a Redis cluster of its own. Should presence be pulled on demand when a chat opens instead of pushed on every change?</p></div>
+      <div><span class="lbl">Decision</span><p>Redis for the routing table and presence state with a slow lease (2 min renew, 5 min TTL); detection is local to the chat server; presence pushed only to subscribed watchers via a pub/sub channel per user. etcd or the orchestrator for chat-server discovery only. Argument 10 below.</p></div>
+      <div class="against"><span class="lbl">Counterpoint, answered</span><p>"10 M presence writes per heartbeat interval." Only if the lease is tied to detection; it is not. Heartbeats never touch Redis, and the lease is a safety net behind service discovery, so it renews every 2 minutes.</p></div>
     </div>
   </article>
 
@@ -494,6 +494,22 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <p class="ruling"><strong>Decided:</strong> Redis Streams, one stream per device, 24-hour window, IDs only. Device-owned sync cursor, server-owned read cursor in Cassandra with Redis cache. Full tables in <a href="design.md">design.md §4.2, §4.5, §4.7</a>. ADR: <code>.memory/decisions/2026-11-01-sync-queue-redis-streams.md</code>.</p>
   </article>
 
+  <article class="arg">
+    <h3>10. Presence: how fast, and to whom<span class="status d">decided</span></h3>
+    <p>Opened as "10 seconds or 30 seconds". The first move was a correction: estimation had tied a 500 k/s Redis lease cost to the 10 s target, but detection is local to the chat server (sweeper over an in-memory table) and the lease exists only for a dead server, which service discovery already handles. So the lease can renew every 2 minutes and the 10 s detection costs only ping frames. The real cost of presence is not detection, it is <em>propagation</em>.</p>
+    <div class="side">
+      <div class="against"><span class="lbl">Push to every online contact</span>A user with 200 contacts and 50 online produces 50 pushes per transition, and mobile radios transition constantly. This is the large number, for a contact screen nobody has open.</div>
+      <div class="for"><span class="lbl">Truc's answer: only who is looking</span>Devices subscribe to the users on their screen: the open chat, the visible rows of the list. Leaving the screen unsubscribes. A transition reaches the handful of people watching, not the contact list. And propagation need not be instant: a small delay or a small error is acceptable, as long as it is bounded.</div>
+    </div>
+    <dl>
+      <dt>Numbers instead of "a bit"</dt>
+      <dd>Detected within 10 s. Visible to watchers within 15 s normally, 30 s worst case. A drop-and-reconnect under 5 s is never shown as offline, which is the debounce that stops every tunnel from flapping the dot.</dd>
+      <dt>Mechanics</dt>
+      <dd>Presence state per user in Redis with a 5 min lease. Subscriptions in the watcher's chat server memory. Cross-server fan-out through a pub/sub channel per watched user, which a chat server joins only while it has a watcher. Online is immediate on <code>hello</code>; offline waits out the 5 s window first.</dd>
+    </dl>
+    <p class="ruling"><strong>Decided:</strong> subscription-based delivery, 10 s detection kept, bounded propagation, lease decoupled and made cheap. <a href="design.md">design.md §5</a>; estimation.md corrected. ADR: <code>.memory/decisions/2026-11-01-presence-subscription.md</code>.</p>
+  </article>
+
   </div>
 </section>
 
@@ -506,7 +522,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <li><s>Is this exercise optimising for learning the canonical design or for what we would actually run?</s> <strong>Answered: the textbook design</strong> (Alex Xu, ch. 12). That answer decided four layers above: WebSocket, the wide-column store, Snowflake IDs, and direct push with a sync queue. It did not decide the programming language, because the book never names one. So "Kotlin or Elixir for the chat servers" is still an open question.</li>
     <li><s>Where is latency measured?</s> <strong>Answered: server to server</strong>, chat-server ingress to recipient-socket write. The whole 500 ms p99 is spent inside our infrastructure, so a durable hop in the delivery path is affordable on latency grounds. Direct push stays because it is simpler, not because the budget forbids a queue.</li>
     <li><s>What is the group-size roadmap?</s> <strong>Answered: 100 is the product now.</strong> Communities of 10 k+ are a Discord-style forum, a different product shape with its own design pass (spec §8.3). Fan-out on write is sized to 100 with no hidden threshold.</li>
-    <li>Is 10 seconds for presence a product promise or a placeholder? Estimation puts the presence lease at 500 k Redis writes/s fleet-wide, the largest hidden cost on the page; relaxing to 30 s halves it.</li>
+    <li><s>Is 10 seconds for presence a product promise or a placeholder?</s> <strong>Answered: keep 10 s detection,</strong> deliver by subscription only to who is looking, accept bounded propagation delay (15 s normal, 30 s worst) and a 5 s debounce. The lease cost that made 10 s look expensive was a coupling error, now removed (argument 10).</li>
     <li><s>Do read receipts in groups need per-member tracking, or is "read by N" enough?</s> <strong>Answered: per member.</strong> Made affordable by storing one read cursor per member per conversation instead of a receipt per message, and by coalescing receipt pushes (design.md §3).</li>
     <li><s>Does the server keep history forever, or is it a relay with device-side storage?</s> <strong>Answered: forever, server-side.</strong> The month-bucketed partitions in design.md §2 already assume this; retention becomes a tiering question only.</li>
     <li>For media: regional buckets or global CDN? Full-size delivery without variants makes the CDN case weaker than usual.</li>
