@@ -311,4 +311,72 @@ describe('B4 history page API, summary row and slow path (design §2.3, §4.3, �
       expect(await get('/conversations?user_id=truc&limit=201')).toEqual({ status: 400, body: { error: 'bad_limit' } });
     });
   });
+
+  describe('slow-path rate limit (design §4.5; sync-queue ADR condition): one token bucket per server', () => {
+    test('cold opens and full-list loads share the bucket and get 429 with retry_after_ms when it is empty; refill follows the clock', async () => {
+      let now = Date.UTC(2026, 10, 1, 8);
+      const srv = await start({ clock: { now: () => now }, history: { slowPathCapacity: 2, slowPathRefillPerSecond: 1 } });
+      const khanh = await connect(DEVICES.khanhPhone);
+      const id = await sendMsg(khanh, 'c1', 'hi');
+
+      expect((await get('/conversations/c1/messages?user_id=truc&device_id=A1')).status).toBe(200);
+      expect((await get('/conversations?user_id=truc')).status).toBe(200);
+      const limited = await get('/conversations/c1/messages?user_id=truc&device_id=A1');
+      expect(limited).toEqual({ status: 429, body: { error: 'slow_path_rate_limited', retry_after_ms: 1000 } });
+      expect((await get('/conversations?user_id=truc&device_id=A2')).status).toBe(429);
+      expect(srv.ctx.trace.rows().some((r) => r.tag === 'http' && r.text === '429 slow path: GET /conversations/c1/messages ← Truc·phone, retry in 1000 ms')).toBe(true);
+      expect(srv.ctx.trace.rows().some((r) => r.tag === 'http' && r.text === '429 slow path: GET /conversations?since=0 ← Truc·laptop, retry in 1000 ms')).toBe(true);
+
+      // Not the slow path: scroll up, page down, jump, incremental list. All still answered while the bucket is empty.
+      expect((await get(`/conversations/c1/messages?user_id=truc&before=${id}`)).status).toBe(200);
+      expect((await get(`/conversations/c1/messages?user_id=truc&after=${id}`)).status).toBe(200);
+      expect((await get(`/conversations/c1/messages/${id}?user_id=truc&limit=5`)).status).toBe(200);
+      expect((await get(`/conversations?user_id=truc&since=${now - 60_000}`)).status).toBe(200);
+
+      now += 500;
+      expect((await get<{ retry_after_ms: number }>('/conversations/c1/messages?user_id=truc')).body.retry_after_ms).toBe(500);
+      now += 500;
+      expect((await get('/conversations/c1/messages?user_id=truc')).status).toBe(200);
+      expect((await get('/conversations/c1/messages?user_id=truc')).status).toBe(429);
+    });
+
+    test('the defaults are 100 tokens refilled at 50 per second, read from moduleOptions.history', async () => {
+      const { DEFAULT_HISTORY_OPTIONS, resolveHistoryOptions } = await import('../../src/history/index.js');
+      expect(DEFAULT_HISTORY_OPTIONS).toEqual({ slowPathCapacity: 100, slowPathRefillPerSecond: 50 });
+      expect(resolveHistoryOptions({ slowPathCapacity: 7 })).toEqual({ slowPathCapacity: 7, slowPathRefillPerSecond: 50 });
+      expect(resolveHistoryOptions(undefined)).toEqual(DEFAULT_HISTORY_OPTIONS);
+    });
+  });
+
+  describe('S4, the part that exists before B3: the list is usable while the socket is still replaying', () => {
+    test('a device fetches the list over HTTP while its connection sits in replay; rows are usable and no deliver has arrived', async () => {
+      const srv = await start();
+      const khanh = await connect(DEVICES.khanhPhone);
+      const id = await sendMsg(khanh, 'c1', 'sent while the laptop was away');
+
+      // Hold the laptop in the replay phase, as a long queue drain would (B3).
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      srv.ctx.events.on('device_connected', async ({ conn }) => { if (conn.device_id === 'A2') await held; });
+      const laptop = new ScriptedClient(DEVICES.trucLaptop, { url: srv.url, trace: srv.ctx.trace });
+      clients.push(laptop);
+      await laptop.connect();
+      await laptop.hello();
+      expect(srv.ctx.connections.byDevice('A2')?.phase).toBe('replay');
+
+      const list = await get<{ conversations: Array<{ conversation_id: string; last_message_id: MessageId; last_preview: string; unread_count: number }> }>('/conversations?user_id=truc&device_id=A2');
+      expect(list.status).toBe(200);
+      expect(list.body.conversations).toEqual([expect.objectContaining({ conversation_id: 'c1', last_message_id: id, last_preview: 'sent while the laptop was away', unread_count: 1 })]);
+      expect(srv.ctx.connections.byDevice('A2')?.phase).toBe('replay');
+      expect(laptop.received.filter((f) => f.t === 'deliver')).toHaveLength(0);
+
+      // In the shared trace the list request precedes any deliver row to the laptop.
+      const rows = srv.ctx.trace.rows();
+      const listAt = rows.findIndex((r) => r.tag === 'http' && r.text === 'GET /conversations?since=0 ← Truc·laptop');
+      const deliverAt = rows.findIndex((r) => r.tag === 'deliver' && r.text.includes('Truc·laptop'));
+      expect(listAt).toBeGreaterThanOrEqual(0);
+      expect(deliverAt === -1 || deliverAt > listAt).toBe(true);
+      release();
+    });
+  });
 });
