@@ -10,13 +10,18 @@
  * kill, the mirror rule, a dead network. `closeCleanly`, `destroyWithoutClose` and
  * `stop` are the app going away and never reconnect. Which server to reconnect to is
  * open (roadmap A3): always the same URL.
+ *
+ * B6 (presence ADR): `watch`/`unwatch` coalesce changes per `watchBatchMs` (500 ms) net
+ * of cancellations, so a scrolled list is one frame per window and a watch undone inside
+ * the window never leaves the device; `watching` is the client's net set, re-sent whole
+ * after every `hello_ack` because the server keeps watch sets per connection.
  */
 
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { FixtureDevice } from '../../src/fixtures.js';
-import { decodeFrame, encodeFrame, type AppState, type ClientFrame, type HelloAckFrame, type MsgFrame, type ServerFrame, type StreamId } from '../../src/protocol.js';
+import { decodeFrame, encodeFrame, type AppState, type ClientFrame, type HelloAckFrame, type MsgFrame, type ServerFrame, type StreamId, type UserId } from '../../src/protocol.js';
 import type { TimerHandle, Timers } from '../../src/server.js';
 import { Trace } from '../../src/trace.js';
 
@@ -63,7 +68,11 @@ export interface ScriptedClientOptions {
   mirrorRule?: boolean | MirrorRuleOptions;
   /** Default on with the §1.4 table; `false` to never reconnect. */
   reconnect?: boolean | BackoffOptions;
+  /** Window over which `watch`/`unwatch` calls coalesce into one frame each (presence ADR: 500 ms). */
+  watchBatchMs?: number;
 }
+
+export const DEFAULT_WATCH_BATCH_MS = 500;
 
 const realTimers: Timers = {
   setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
@@ -107,8 +116,14 @@ export class ScriptedClient {
   readonly reconnectAttempts: number[] = [];
   /** Automatic reconnects that reached `hello_ack`. */
   reconnects = 0;
+  /** Users this device watches, net of every `watch`/`unwatch` call, sent or still batched. */
+  readonly watching = new Set<UserId>();
 
   private readonly url: string;
+  private readonly watchBatchMs: number;
+  private readonly pendingWatch = new Set<UserId>();
+  private readonly pendingUnwatch = new Set<UserId>();
+  private watchTimer: TimerHandle | null = null;
   private readonly now: () => number;
   private readonly timers: Timers;
   private readonly mirror: Required<MirrorRuleOptions> | null;
@@ -126,6 +141,7 @@ export class ScriptedClient {
   constructor(device: FixtureDevice, opts: ScriptedClientOptions) {
     this.device = device;
     this.url = opts.url;
+    this.watchBatchMs = opts.watchBatchMs ?? DEFAULT_WATCH_BATCH_MS;
     this.now = opts.now ?? Date.now;
     this.timers = opts.timers ?? realTimers;
     this.trace = opts.trace ?? new Trace({ now: this.now });
@@ -221,7 +237,68 @@ export class ScriptedClient {
     });
     const ack = (await this.expect('hello_ack')) as HelloAckFrame;
     this.flushOutbox();
+    this.rewatch();
     return ack;
+  }
+
+  // ---- presence subscriptions (design §5.3, presence ADR) ----------------------------
+
+  /** Starts watching users; coalesced with other changes of the window into one `watch` frame. */
+  watch(user_ids: UserId[]): void {
+    for (const u of user_ids) {
+      if (this.pendingUnwatch.delete(u)) { /* undone before it left the device */ }
+      else if (!this.watching.has(u)) this.pendingWatch.add(u);
+      this.watching.add(u);
+    }
+    this.armWatchBatch();
+  }
+
+  /** Stops watching users; coalesced the same way into one `unwatch` frame. */
+  unwatch(user_ids: UserId[]): void {
+    for (const u of user_ids) {
+      if (this.pendingWatch.delete(u)) { /* never left the device */ }
+      else if (this.watching.has(u)) this.pendingUnwatch.add(u);
+      this.watching.delete(u);
+    }
+    this.armWatchBatch();
+  }
+
+  /** Sends whatever the window holds now, one frame per direction, and disarms it. */
+  flushWatches(): void {
+    this.disarmWatchBatch();
+    if (this.pendingWatch.size > 0) this.send({ t: 'watch', user_ids: [...this.pendingWatch] });
+    if (this.pendingUnwatch.size > 0) this.send({ t: 'unwatch', user_ids: [...this.pendingUnwatch] });
+    this.pendingWatch.clear();
+    this.pendingUnwatch.clear();
+  }
+
+  private armWatchBatch(): void {
+    const dirty = this.pendingWatch.size > 0 || this.pendingUnwatch.size > 0;
+    if (!dirty) {
+      this.disarmWatchBatch();
+      return;
+    }
+    if (this.watchTimer !== null) return;
+    this.watchTimer = this.timers.setTimeout(() => {
+      this.watchTimer = null;
+      this.flushWatches();
+    }, this.watchBatchMs);
+  }
+
+  private disarmWatchBatch(): void {
+    if (this.watchTimer === null) return;
+    this.timers.clearTimeout(this.watchTimer);
+    this.watchTimer = null;
+  }
+
+  /** The server keeps watch sets per connection: a fresh connection re-sends the whole set at once. */
+  private rewatch(): void {
+    this.disarmWatchBatch();
+    this.pendingWatch.clear();
+    this.pendingUnwatch.clear();
+    if (this.watching.size === 0) return;
+    this.trace.add('note', `${this.name} re-watches ${this.watching.size} users after hello_ack`);
+    this.send({ t: 'watch', user_ids: [...this.watching] });
   }
 
   send(frame: ClientFrame): void {
@@ -340,6 +417,7 @@ export class ScriptedClient {
   private giveUp(): void {
     this.wanted = false;
     this.disarmMirror();
+    this.disarmWatchBatch();
     if (this.retry !== null) {
       this.timers.clearTimeout(this.retry);
       this.retry = null;
