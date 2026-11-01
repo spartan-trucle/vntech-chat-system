@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 9 (wave 2 complete on lane B, range 8accc6e..b637832 handed to C; B3 in flight; A3 waiting on the author)
+Last updated: 2026-11-01, report round 10 (wave 2 merged to main 83c4e88; B3 in flight; A3 started with service discovery)
 
 ## Epics
 
@@ -12,19 +12,19 @@ Last updated: 2026-11-01, report round 9 (wave 2 complete on lane B, range 8accc
 | A1 tradeoffs.md | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
 | A2 sequence diagrams | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
 | A4 rubric run | A | 1 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
-| A3 open decisions | hub + author | 2 | blocked on author | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
+| A3 open decisions | hub + author | 2 | in_progress: service discovery (decision 1) under debate | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
 | B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
 | B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
 | B2 send path, store, dedup | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 4c293da | 111 passed (lane), 93 alone | push pending has tick granularity, the per-destination bound must leave room for one tick's fan-out; loopback only backs up after ~0.5 MB so the backpressure test corks the socket | none |
-| B4 history + summary (slow path) | B | 2 | done on lane (de120aa + fixtures a6373d4), in review (C) with wave 2 | claude/b-prototype-297ab9 @ a6373d4 | 192 passed (lane), typecheck clean | core router probe moved and three fixtures updated after merge | none |
-| B5 receipts + unread | B | 2 | done on lane (53b17e9 + fixture fix be877df), in review (C) with wave 2 | claude/b-prototype-297ab9 @ be877df | 166 passed (lane), typecheck clean | B5's status test fixture predated the sha256 column added by the B7 fix; one-line fixture fix after merge | none |
-| B6 presence | B | 2 | done on lane (b637832), in review (C) with wave 2 | claude/b-prototype-297ab9 @ b637832 | 221 passed (lane), 140 alone | five assertions in three B0/B1 tests amended (lease interval exists while online; `watch` now answered); core unhandled-frame path has no probe left | none |
-| B7 media stub | B | 2 | done on lane (f650565 + fix d7ea3ea), in review (C) with wave 2 | claude/b-prototype-297ab9 @ d7ea3ea | 133 passed (lane) | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
+| B4 history + summary (slow path) | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ a6373d4 | 192 passed (lane), typecheck clean | core router probe moved and three fixtures updated after merge | none |
+| B5 receipts + unread | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ be877df | 166 passed (lane), typecheck clean | B5's status test fixture predated the sha256 column added by the B7 fix; one-line fixture fix after merge | none |
+| B6 presence | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ b637832 | 221 passed (lane), 140 alone | five assertions in three B0/B1 tests amended (lease interval exists while online; `watch` now answered); core unhandled-frame path has no probe left | none |
+| B7 media stub | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ d7ea3ea | 133 passed (lane) | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
 | B3 sync queue replay | B | 3 | in_progress (subagent, own worktree, on top of B4) | claude/b-prototype-297ab9 | | | |
 | B8 scenario suite | B | 4 | todo | feature/B-prototype | | | |
 | B9 real Redis | B | 5 (optional) | todo | | | | |
-| C1 integrate (per epic) | C | continuous | reviewing wave 2 (B4 B5 B6 B7, range 8accc6e..b637832) | main @ 6a81830 | | | |
+| C1 integrate (per epic) | C | continuous | waiting (10 epics merged) | main @ 83c4e88 | 221 passed + typecheck on merged tree | none | none |
 | C2 retrospective | C | 4 | todo | main | n/a | | |
 
 ## Merged to main
@@ -34,6 +34,7 @@ Last updated: 2026-11-01, report round 9 (wave 2 complete on lane B, range 8accc
 | A1, A2, A4 | ec786e5 (closing tasks e4b9a80) | 2026-11-01 |
 | B0 | 3820d58 (closing tasks e4b9a80) | 2026-11-01 |
 | B1, B2 | 6a81830 (no notebook changes needed) | 2026-11-01 |
+| B4, B5, B6, B7 | 83c4e88 (no notebook changes needed) | 2026-11-01 |
 
 ## Surprises collected for C2
 
