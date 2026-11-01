@@ -420,8 +420,10 @@ GET /conversations?since={list_cursor}&limit=200
 Where the fields come from:
 
 - `last_message_id`, `last_preview`, `last_sender`, `last_at`: a per-conversation summary
-  row in Redis (`conv:{id}:summary`), updated on every write. 100 bytes per conversation,
-  one `MGET` for the user's membership list.
+  row (`conv:{id}:summary`), updated on every write, ~150 bytes. Kept in Redis for
+  conversations active in the last 30 days (~30 GB, estimation.md §3.5) and read from a
+  summary table in the message store for the rest; one `MGET` for the hot part of the
+  user's membership list.
 - `unread_count`: `last_message_id > my_read_cursor` gives the dot; the count is a bounded
   range count on the current month bucket of the message store, capped at 99+ (§3.5).
 - `since`: the device's `list_cursor` is the `last_at` of the newest row it has; the server
@@ -460,9 +462,9 @@ queue; the queue replay later dedups by message ID on the client.
 - **Expiry.** After 30 days without a replay the queue rows expire. A device returning
   later is treated as new: it gets the conversation summary, and each chat loads from
   the store on open. Nothing is lost; the queue was only the fast path.
-- **Write cost.** 2 B messages × ~75 recipient devices on average (groups median 5,
-  weighted by activity) is the number to estimate in `estimation.md`; it is the queue's
-  real price and the reason rows carry IDs, not bodies.
+- **Write cost.** 2 B messages × ~6 recipient devices on average (estimation.md §1) is
+  12 B appends a day, 700 k/s at peak: six times the message store's write rate, on tiny
+  rows. That is the queue's real price and the reason rows carry IDs, not bodies.
 
 ### 4.6 Rejected alternatives
 

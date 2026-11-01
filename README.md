@@ -10,8 +10,8 @@ at Messenger / WhatsApp scale.
   and [`docs/diagrams/high-level.html`](docs/diagrams/high-level.html), the interactive architecture diagram.
 - [`docs/specification.md`](docs/specification.md) — the brief: requirements, scale, the
   decisions the design must make, evaluation rubric, follow-up extensions.
-- `docs/estimation.md`, `docs/design.md`, `docs/tradeoffs.md`, `docs/diagrams/` — the design
-  itself, produced while working through the brief (see §6 of the specification).
+- [`docs/estimation.md`](docs/estimation.md) — the numbers, derived, and which decisions they changed.
+- `docs/tradeoffs.md` — not yet written (see §6 of the specification).
 
 Companion to the other `vntech-*` systems talks:
 [vntech-load-balancer](https://github.com/spartan-trucle/vntech-load-balancer),

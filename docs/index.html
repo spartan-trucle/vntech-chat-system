@@ -240,7 +240,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <div><b>≈ 400 GB</b>text + metadata per day<br><small>≈ 730 TB over 5 years, before replication</small></div>
     <div><b>≈ 400 TB</b>media per day<br><small>a thousand times the text volume</small></div>
   </div>
-  <p>The two numbers that should change your mind about something: the peak write rate rules out any store that needs a single writer, and the media volume means the blob store is a bigger system than the chat store.</p>
+  <p>The two numbers that should change your mind about something: the peak write rate rules out any store that needs a single writer, and the media volume means the blob store is a bigger system than the chat store. The full derivations, and the six decisions they changed, are in <a href="estimation.md">estimation.md</a>.</p>
 </section>
 
 <section id="stack">
@@ -485,7 +485,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <li><s>Is this exercise optimising for learning the canonical design or for what we would actually run?</s> <strong>Answered: the textbook design</strong> (Alex Xu, ch. 12). That answer decided four layers above: WebSocket, the wide-column store, Snowflake IDs, and direct push with a sync queue. It did not decide the programming language, because the book never names one. So "Kotlin or Elixir for the chat servers" is still an open question.</li>
     <li>Where is latency measured? If it is server ingress to server egress, Kafka in the hot path is affordable. If it is device to device, it probably is not.</li>
     <li>What is the group-size roadmap? If 100 is forever, fan-out on write is fine. If 10 000 is a follow-up, design the threshold now.</li>
-    <li>Is 10 seconds for presence a product promise or a placeholder? Each halving roughly doubles the heartbeat load on Redis.</li>
+    <li>Is 10 seconds for presence a product promise or a placeholder? Estimation puts the presence lease at 500 k Redis writes/s fleet-wide, the largest hidden cost on the page; relaxing to 30 s halves it.</li>
     <li><s>Do read receipts in groups need per-member tracking, or is "read by N" enough?</s> <strong>Answered: per member.</strong> Made affordable by storing one read cursor per member per conversation instead of a receipt per message, and by coalescing receipt pushes (design.md §3).</li>
     <li><s>Does the server keep history forever, or is it a relay with device-side storage?</s> <strong>Answered: forever, server-side.</strong> The month-bucketed partitions in design.md §2 already assume this; retention becomes a tiering question only.</li>
     <li>For media: regional buckets or global CDN? Full-size delivery without variants makes the CDN case weaker than usual.</li>
