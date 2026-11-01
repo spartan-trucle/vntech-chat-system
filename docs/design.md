@@ -7,6 +7,19 @@ The discussion page [`index.html`](index.html) tracks which layers are still ope
 High-level architecture: [`diagrams/high-level.html`](diagrams/high-level.html) (hand-drawn SVG; buttons
 highlight the send, offline, and history/media flows).
 
+Latency budget (decided 2026-11-01): N1 is measured **server to server**, chat-server
+ingress to recipient-socket write. The budget is spent entirely inside our infrastructure,
+so every hop on the delivery path (store write, route lookup, cross-server push) is
+accountable to it; mobile radio time is not.
+
+Group ceiling (decided 2026-11-01): 100 members is the product today. Fan-out on write
+is sized to it. Discord-style channels at 10 k+ are a different product shape and get
+their own design pass (spec §8.3), not a threshold hidden in this one.
+
+Prototype (decided 2026-11-01): the exercise **will** produce a prototype chat server to
+exercise the heartbeat, reconnect and replay design in §1 and §4. The runtime question is
+therefore load-bearing; see the discussion page, argument 7.
+
 Frame (decided 2026-11-01): **the canonical architecture** from Alex Xu, *System Design
 Interview* ch. 12 — stateless API servers, stateful chat servers over WebSocket, a presence
 service, a wide-column message store, a per-user message sync queue, Snowflake IDs, push

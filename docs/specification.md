@@ -23,7 +23,7 @@ extensible to the follow-up questions in §8.
 | ID | Requirement |
 |----|-------------|
 | F1 | One-to-one chat between two users |
-| F2 | Group chat, up to **100 members** per group |
+| F2 | Group chat, up to **100 members** per group. Larger communities (Discord-style channels, 10 k+) are a separate product shape and a follow-up (§8) |
 | F3 | Real-time delivery with low latency when both parties are online |
 | F4 | Offline delivery: messages sent to an offline user are stored and delivered when they reconnect |
 | F4a | **Notify and mark unread:** every new message pushes a notification to the recipient's devices (hint only, body fetched on open) and marks that conversation unread for that user until they open it |
@@ -39,7 +39,7 @@ extensible to the follow-up questions in §8.
 
 | ID | Requirement | Target |
 |----|-------------|--------|
-| N1 | Delivery latency, both online | p50 < 100 ms, p99 < 500 ms end to end |
+| N1 | Delivery latency, both online | p50 < 100 ms, p99 < 500 ms, **measured server to server**: from the sender's frame arriving at a chat server to the frame being written to the recipient's socket. Device radios are outside the budget |
 | N2 | Availability | 99.99 % for send/receive path |
 | N3 | Durability | A message acknowledged to the sender is never lost |
 | N4 | Ordering | Messages within a single conversation are shown in a consistent order on every device |
