@@ -393,31 +393,34 @@ already is that stream.
 
 ### 4.2 Sync queue, defined
 
-One append-only log per device:
+**Backing: Redis Streams, one stream per device, 24-hour retention.** (Decided after
+estimation: see §4.7 for the argument and what was rejected.)
 
 ```
-sync_queue (
-  device_id    uuid,
-  bucket       int,        -- day; bounds partition size for a device offline for weeks
-  message_id   bigint,     -- Snowflake; global order across conversations
-  conversation_id uuid,
-  PRIMARY KEY ((device_id, bucket), message_id)
-) WITH default_time_to_live = 2592000;   -- 30 days, see §4.5
+XADD   sq:{device_id} MAXLEN ~ 100000  *  m <message_id>  c <conversation_id>
+XRANGE sq:{device_id} (<cursor_stream_id> +  COUNT 100       -- replay
+XTRIM  sq:{device_id} MINID <id 24 h ago>                    -- hourly sweeper
 ```
 
 Operations, and nothing else:
 
-- **append** on every stored message, once per recipient device (150 appends for a full
-  group). Rows are IDs only; bodies are read from the message store on replay, so a
-  queue row is ~50 bytes.
-- **replay** from `last_synced_message_id`: read rows `> cursor` in order, join bodies
-  from the message store in batches of 100, push over the socket.
-- **ack**: the device advances `last_synced_message_id`; the server does not delete
-  rows, the TTL does. Advancing the cursor is the trim.
+- **append** on every stored message, once per recipient device (~6 on average, 150 for a
+  full group). Entries carry IDs only; bodies are read from the message store on replay,
+  so an entry is ~50 bytes and the whole fleet's live data is ~1.8 TB with replication
+  (estimation.md §3.3 at a 24 h window).
+- **replay** from the device's cursor: `XRANGE` forward in batches of 100, join bodies
+  from the message store, push over the socket.
+- **ack**: the device advances its cursor; nothing is deleted on ack. The hourly trim and
+  the `MAXLEN` cap bound the stream.
 
 The queue is written on the fan-out path, after the message store write and in the same
-retry loop, so a message that is stored is eventually in every recipient device's queue.
-The write is idempotent (same primary key), so retries are safe.
+retry loop, so a message that is stored is eventually in every recipient device's stream.
+`XADD` with a client-chosen ID derived from the Snowflake makes retries idempotent.
+
+**The queue is a fast path, not a source of truth.** A device offline longer than 24 h
+finds its stream trimmed past its cursor and takes the slow path: conversation summary
+(§4.3), then each chat loads from the message store on open. Nothing is lost; the device
+pays latency instead.
 
 ### 4.3 Conversation summary on reconnect
 
@@ -471,24 +474,55 @@ queue; the queue replay later dedups by message ID on the client.
 
 ### 4.5 Bounds
 
-- **Queue size.** A device offline for 30 days with 100 active groups at 1 000 messages a
-  day each is 3 M rows, 150 MB. The daily bucket keeps any one partition at ~100 k rows.
-- **Expiry.** After 30 days without a replay the queue rows expire. A device returning
-  later is treated as new: it gets the conversation summary, and each chat loads from
-  the store on open. Nothing is lost; the queue was only the fast path.
-- **Write cost.** 2 B messages × ~6 recipient devices on average (estimation.md §1) is
-  12 B appends a day, 700 k/s at peak: six times the message store's write rate, on tiny
-  rows. That is the queue's real price and the reason rows carry IDs, not bodies.
+- **Window.** 24 h, a product decision: mobile reconnects are seconds to hours; a device
+  away longer than a day is rare and the slow path serves it correctly. Each extra day of
+  window costs ~600 GB of Redis memory before replication (estimation.md §3.3).
+- **Stream size.** A device in 100 active groups at 1 000 messages a day each would see
+  100 k entries a day; `MAXLEN ~ 100000` caps the pathological case and such a device
+  simply takes the slow path for the overflow.
+- **Write cost.** 12 B `XADD`s a day, 700 k/s at peak, spread by device ID across a Redis
+  cluster of roughly 10 nodes. Six times the message store's write rate, on tiny entries.
+- **Loss.** If a Redis shard is lost with its replica, every device on that shard takes
+  the slow path on its next reconnect. The slow path must therefore be rate-limited per
+  chat server so a shard loss is a latency event, not a message-store outage.
 
 ### 4.6 Rejected alternatives
 
 | Alternative | Why not |
 |-------------|---------|
 | No queue: compare cursors and page the store per conversation | Right for the chat list, wrong for replay: N range scans stitched client-side, no single ordered stream, and a device in 200 conversations pays 200 reads on every reconnect. |
-| Queue rows carry message bodies | 2 KB × 75 devices per message instead of 50 B; bodies change on delete/edit and the queue would go stale. |
+| Queue rows carry message bodies | 2 KB × 6 devices per message instead of 50 B; bodies change on delete/edit and the queue would go stale. |
 | Derive the chat list from the queue replay | The list would appear only after the drain, which can be thousands of messages; the user stares at a spinner. |
 | One queue per user, not per device | Cannot express "phone is a week behind, laptop is current". |
-| Delete rows on ack instead of TTL | Tombstone storms in Cassandra; the cursor already makes acked rows invisible. |
+| 30-day window | 54 TB live, which forces Cassandra or Kafka, to serve the small fraction of reconnects the slow path already handles correctly. |
+| Cassandra with TTL as the queue | 12 B expiring rows a day is the classic tombstone failure; survivable only with daily partitions dropped whole under TimeWindowCompaction, which is a lot of care for a 24 h fast path. |
+| Kafka, one partition per user | Handles the write rate trivially, but 15 M per-device consumers reading from arbitrary offsets is not Kafka's model, and Kafka cannot hold the cursor for us either. |
+
+### 4.7 Cursors: who owns them, and what happens when they are lost
+
+Three cursors exist (§2.3, §3.3, §4.3). The rule for all of them: **losing a cursor must
+make the system replay more, never less.** Over-replay is harmless because the client
+dedups by message ID; under-replay loses messages silently.
+
+| Cursor | Primary owner | Durable copy | Cache | If lost |
+|--------|---------------|--------------|-------|---------|
+| `last_synced_message_id` (per device) | **the device**, sent in `hello` on every connect | none needed: the device is the owner | none | device reinstalled or wiped → it has no cursor → treated as a new device: slow path. Server never needs to remember it. |
+| `last_read_id` (per user per conversation) | the server, because other users and other devices read it (receipts, unread) | Cassandra `read_cursors` | Redis, for unread and summary | Redis lost → read from Cassandra, one slower round trip. Cassandra row lost (should not happen at RF 3) → treated as "never read": the conversation shows unread, the user taps it, cursor is rewritten. Annoying, not wrong. |
+| `list_cursor` (per device, newest `last_at` seen) | the device | none | none | device sends `since=0` → full summary list, paged. Slow, not wrong. |
+
+Why the server does not store the device cursor: it would be a second copy that can
+disagree with the device's. The device is the only party that knows what it has rendered,
+so it is the only party that can say what it has not. The server trusts the `hello` cursor
+and replays from there; if the device lies forward it loses messages, which is its own
+device, and if it lies backward it gets duplicates, which it dedups.
+
+Why Redis and Kafka are not cursor stores: Redis is memory and loses on a full-cluster
+failure, which would convert every device to the slow path at once; Kafka offsets are
+positions inside Kafka topics, not positions in our message store, so they cannot name a
+message ID.
+
+Invariant: **a cursor advances only after the device has acked the batch**, never when
+the server has merely sent it. The ack is the only thing that moves the number.
 
 ---
 
@@ -497,6 +531,4 @@ queue; the queue replay later dedups by message ID on the client.
 - Production runtime — deliberately undecided; the prototype is Node.js (ADR above).
 - Presence fan-out: §1.5 decides how *offline* is detected; it does not decide how 10 M
   state changes reach friends' screens.
-- Sync-queue backing: §4.2 is written as a Cassandra table; Redis Streams or Kafka could
-  back the same operations. Decide once the write volume is in `estimation.md`.
 - Service discovery: §1.4 and §1.5 both depend on it; ZooKeeper vs etcd vs orchestrator.

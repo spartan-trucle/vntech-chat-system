@@ -44,6 +44,7 @@ extensible to the follow-up questions in §8.
 | N3 | Durability | A message acknowledged to the sender is never lost |
 | N4 | Ordering | Messages within a single conversation are shown in a consistent order on every device |
 | N5 | Scalability | Horizontal; no single component is a hard ceiling for §3 numbers |
+| N7 | Catch-up window | A device reconnecting within **24 hours** receives every missed message by replay with no gap and no duplicates. A device away longer gets the current chat list immediately and loads each conversation from persistent history on open |
 | N6 | Security | Transport encryption everywhere; a user only reads conversations they belong to |
 
 ### 2.3 Out of scope (for the first design pass)

@@ -323,16 +323,16 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   </article>
 
   <article class="layer">
-    <header><h3>Fan-out and queueing</h3><span class="state open">open</span><p class="q">Between "stored" and "on the recipient's screen", is there a queue, and who consumes it?</p></header>
+    <header><h3>Fan-out and queueing</h3><span class="state decided">decided</span><p class="q">Between "stored" and "on the recipient's screen", is there a queue, and who consumes it?</p></header>
     <div class="cands">
       <div class="cand"><b>Kafka</b><span>Durable, replayable, partition per user or per conversation. Adds latency and a large operational surface.</span></div>
-      <div class="cand"><b>Redis Streams / pub-sub</b><span>Fast and already in the stack. Durability is weaker; losing a node can lose in-flight deliveries.</span></div>
-      <div class="cand lean"><b>Direct push + per-user sync queue</b><span>The textbook path: store, push straight to online recipients' servers, and append to each device's sync queue for cursor catch-up and offline delivery.</span></div>
+      <div class="cand"><b>Redis Streams / pub-sub</b><span>Chosen as the queue backing with a 24 h window. Losing a shard sends its devices to the slow path, which is rate-limited for that reason.</span></div>
+      <div class="cand lean"><b>Direct push + per-device sync queue on Redis Streams</b><span>The textbook path: store, push straight to online recipients' servers, and append to each device's sync queue for cursor catch-up and offline delivery.</span></div>
       <div class="cand"><b>NATS JetStream</b><span>Lighter than Kafka, durable streams, less ecosystem.</span></div>
     </div>
     <div class="verdict">
-      <div><span class="lbl">Lean</span><p>Direct push for online recipients; catch-up for everything else. Kafka left the hot path once the canonical frame was chosen. Backpressure answered: bounded per-destination buffer, drop to the device's catch-up path on timeout.</p></div>
-      <div class="against"><span class="lbl">Counterpoint, answered</span><p>"Cursors plus the store can answer what did I miss." True for the chat list, which now has its own summary read; false for ordered replay across hundreds of conversations. Argument 8 below. Remaining: what backs the queue.</p></div>
+      <div><span class="lbl">Decision</span><p>Direct push for online recipients; per-device sync queue on Redis Streams with a 24 h window for catch-up; slow path from the store beyond that. Backpressure: bounded per-destination buffer, drop to the device's catch-up path on timeout. Arguments 6, 8 and 9 below.</p></div>
+      <div class="against"><span class="lbl">Counterpoint, answered</span><p>"Redis is not durable." Correct, and the queue is a fast path, not a source of truth: the message store is. A shard loss costs latency for its devices, bounded by rate-limiting the slow path.</p></div>
     </div>
   </article>
 
@@ -449,7 +449,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
       <dt>Backpressure, the counterpoint still on the board</dt>
       <dd>Direct push means one slow recipient server in a 100-member group can stall the sender's server. The fix is a bounded per-destination buffer with a drop-to-queue rule: if the recipient server does not take the push within budget, the message stays in that device's sync queue and the device catches up on its own. Backpressure becomes a delay for one recipient, not a stall for the sender.</dd>
     </dl>
-    <p class="ruling"><strong>Direction decided</strong> (direct push plus sync queue for catch-up), and the queue itself survived argument 8. <strong>Open:</strong> what backs the queue, once the write volume is estimated.</p>
+    <p class="ruling"><strong>Decided</strong> across arguments 6, 8 and 9: direct push plus a per-device sync queue on Redis Streams with a 24-hour window.</p>
   </article>
 
   <article class="arg">
@@ -474,6 +474,24 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <p class="ruling"><strong>Decided: keep the per-device sync queue</strong> (IDs only, ~50 bytes a row, 30-day TTL, replayed from the device cursor), and add a <strong>conversation summary</strong> read over HTTPS that renders the chat list with unread dots and previews before a single queued message has replayed. Sequence and bounds in <a href="design.md">design.md §4</a>. Still open: what backs the queue, once the write volume is estimated.</p>
   </article>
 
+  <article class="arg">
+    <h3>9. What backs the sync queue, and where do cursors live<span class="status d">decided</span></h3>
+    <p>Asked as "Cassandra, Redis Streams, or Kafka". The opening challenge was that the 30-day window, a placeholder, was deciding the answer: 54 TB of live data forces Cassandra or Kafka to serve the small fraction of reconnects the slow path already handles correctly.</p>
+    <div class="side">
+      <div class="for"><span class="lbl">Truc's answer</span>The fast path serves 24 hours of offline. Longer than that, the device accepts loading from the persistent store. And the follow-up question that mattered: should cursors always live in Redis or Kafka, and what happens when they are lost?</div>
+      <div class="against"><span class="lbl">The constraint that answers it</span>At a 24 h window the live data is ~1.8 TB, which fits a Redis cluster of about ten nodes. Redis Streams gives exactly the three operations the queue needs: <code>XADD</code> on fan-out, <code>XRANGE</code> from the cursor on replay, <code>XTRIM</code> by time. Neither Cassandra's tombstone care nor Kafka's consumer model is needed for a one-day fast path.</div>
+    </div>
+    <dl>
+      <dt>Cursors: owner, durable copy, loss</dt>
+      <dd>The device's sync cursor is owned by the <em>device</em> and sent on every connect; the server never stores it, so there is no second copy to disagree with. The user's read cursor is owned by the server because other people read it; it lives in Cassandra with Redis as a cache. Kafka is not a cursor store at all: its offsets name positions in Kafka, not message IDs in our store.</dd>
+      <dt>The one rule for loss</dt>
+      <dd>Losing a cursor must make the system replay <em>more</em>, never less. Over-replay is harmless because the client dedups by message ID; under-replay loses messages silently. A wiped device is a new device (slow path). A lost Redis cache is one slower round trip to Cassandra. A cursor advances only after the device acks, never when the server has merely sent.</dd>
+      <dt>The failure that must be designed for</dt>
+      <dd>Losing a Redis shard with its replica sends every device on it to the slow path on the next reconnect. The slow path is rate-limited per chat server so that is a latency event, not a message-store outage.</dd>
+    </dl>
+    <p class="ruling"><strong>Decided:</strong> Redis Streams, one stream per device, 24-hour window, IDs only. Device-owned sync cursor, server-owned read cursor in Cassandra with Redis cache. Full tables in <a href="design.md">design.md §4.2, §4.5, §4.7</a>. ADR: <code>.memory/decisions/2026-11-01-sync-queue-redis-streams.md</code>.</p>
+  </article>
+
   </div>
 </section>
 
@@ -491,7 +509,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <li><s>Does the server keep history forever, or is it a relay with device-side storage?</s> <strong>Answered: forever, server-side.</strong> The month-bucketed partitions in design.md §2 already assume this; retention becomes a tiering question only.</li>
     <li>For media: regional buckets or global CDN? Full-size delivery without variants makes the CDN case weaker than usual.</li>
     <li><s>Is the exercise going to produce a prototype chat server, or only the design?</s> <strong>Answered: a prototype, in Node.js + TypeScript,</strong> to prove the heartbeat, reconnect and replay protocol (argument 7).</li>
-    <li><s>Does a reconnecting device need a sync queue, or is "compare cursors, then page the store" enough?</s> <strong>Answered: keep the queue</strong> for ordered replay, plus a conversation summary read for the chat list (argument 8). Open: what backs the queue, after the write volume is estimated.</li>
+    <li><s>Does a reconnecting device need a sync queue, or is "compare cursors, then page the store" enough?</s> <strong>Answered: keep the queue</strong> for ordered replay, plus a conversation summary read for the chat list (argument 8). Backing decided in argument 9: Redis Streams, 24 h window.</li>
   </ol>
 </section>
 
