@@ -15,7 +15,7 @@
  * sync-queue ADR's precondition for relying on the queue (design §4.5).
  */
 
-import { bucketOf, bucketOfTime, type MessageId } from '../ids.js';
+import { bucketOf, bucketOfTime, compareIds, type MessageId } from '../ids.js';
 import type { Conversation } from '../ports/index.js';
 import type { Message, UserId } from '../protocol.js';
 import { deviceName, USERS } from '../fixtures.js';
@@ -114,6 +114,12 @@ function parseCursor(raw: string | undefined): MessageId | undefined {
   if (raw === undefined) return undefined;
   if (!ID_RE.test(raw)) throw new BadRequest('bad_cursor');
   return raw;
+}
+
+function parseSince(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return 0;
+  if (!/^\d+$/.test(raw)) throw new BadRequest('bad_since');
+  return Number(raw);
 }
 
 /** `Truc·phone` when a device_id is given, else the user's display name. */
@@ -238,6 +244,52 @@ export function registerHistory(ctx: ServerContext): () => void {
       ? (await walkForward(store, id, { startBucket: bucket, ceilBucket: bucketOfTime(ctx.clock.now()), after: message_id, limit: afterN })).messages
       : [];
     const body: JumpResponse = { message, before, after };
+    return { status: 200, body };
+  }));
+
+  // ---- list: the chat list from the summary rows (design §4.3) ----
+  // One MGET for the membership list, then one read cursor and one bounded count per row
+  // returned. A full-list load (`since` 0) is the slow path; an incremental `since` is a
+  // handful of rows and is not charged.
+  ctx.http.route('GET', '/conversations', (req) => handle(req, async () => {
+    const user_id = req.query['user_id'];
+    if (!user_id) return error(400, 'missing_user_id');
+    const since = parseSince(req.query['since']);
+    const limit = parseLimit(req.query['limit'], DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+    const who = callerName(user_id, req.query['device_id']);
+    const line = `GET /conversations?since=${since}`;
+
+    if (since === 0) {
+      const limited = chargeSlowPath(line, who);
+      if (limited) return limited;
+    }
+    ctx.trace.add('http', `${line} ← ${who}`);
+
+    const memberOf = await ctx.ports.conversations.conversationsOf(user_id);
+    const summaries = await ctx.ports.summaries.getMany(memberOf.map((c) => c.conversation_id));
+    const changed = summaries
+      .filter((s) => s.last_at > since)
+      .sort((a, b) => b.last_at - a.last_at || compareIds(b.last_message_id, a.last_message_id))
+      .slice(0, limit);
+
+    const conversations: ListRow[] = [];
+    for (const s of changed) {
+      const my_read_cursor = (await ctx.ports.cursors.readCursor(s.conversation_id, user_id)) ?? null;
+      // Unread is derived (design §3.5): rows above the cursor in the last message's bucket, never a full count.
+      const unread_count = await ctx.ports.messages.countAfter(s.conversation_id, bucketOf(s.last_message_id), my_read_cursor ?? '0', UNREAD_CAP);
+      conversations.push({
+        conversation_id: s.conversation_id,
+        last_message_id: s.last_message_id,
+        last_preview: s.last_preview,
+        last_sender: s.last_sender,
+        last_at: s.last_at,
+        my_read_cursor,
+        unread_count,
+        unread_capped: unread_count >= UNREAD_CAP,
+      });
+    }
+    const list_cursor = conversations.reduce((max, r) => Math.max(max, r.last_at), since);
+    const body: ListResponse = { conversations, list_cursor };
     return { status: 200, body };
   }));
 
