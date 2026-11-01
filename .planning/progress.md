@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 12 (B3 merged to main 806a9ec; B8 in flight; A3 service discovery under debate)
+Last updated: 2026-11-01, report round 13 (lane B complete: B8 on lane 252f739, handed to C; C2 unblocked after the B8 merge; A3 service discovery under debate)
 
 ## Epics
 
@@ -22,10 +22,10 @@ Last updated: 2026-11-01, report round 12 (B3 merged to main 806a9ec; B8 in flig
 | B6 presence | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ b637832 | 221 passed (lane), 140 alone | five assertions in three B0/B1 tests amended (lease interval exists while online; `watch` now answered); core unhandled-frame path has no probe left | none |
 | B7 media stub | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ d7ea3ea | 133 passed (lane) | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
 | B3 sync queue replay | B | 3 | merged (806a9ec) | claude/b-prototype-297ab9 @ 27365ec | 242 passed (lane, 3 runs), 212 alone | core defect: per-connection frame chain held acks behind hello during replay; fixed in core. Client acks on a heuristic (batch size or 20 ms gap) since nothing on the wire marks batch end | none |
-| B8 scenario suite | B | 4 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
-| B9 real Redis | B | 5 (optional) | todo | | | | |
-| C1 integrate (per epic) | C | continuous | waiting for B8 (11 epics merged) | main @ 806a9ec | 242 passed + typecheck, no flake in 3 runs | none | none |
-| C2 retrospective | C | 4 | todo | main | n/a | | |
+| B8 scenario suite | B | 4 | done on lane (252f739), in review (C) | claude/b-prototype-297ab9 @ 252f739 | 258 passed (2 runs); scenarios 6/6 fake time and S1+S5 on real timers | S1: server debounce expiry (t+11+5) coincides with the client's first reconnect (15+1), watcher sees offline then online in the same second; 250 queued messages ≈ 1500 trace rows, near the 2000 cap | none |
+| B9 real Redis | B | 5 (optional) | not started, awaiting the author's ask | | | ports and contract tests ready | author |
+| C1 integrate (per epic) | C | continuous | reviewing B8 (range 27365ec..252f739) | main @ 806a9ec | | | |
+| C2 retrospective | C | 4 | unblocked, starts after the B8 merge | main | n/a | | |
 
 ## Merged to main
 
@@ -53,6 +53,7 @@ Last updated: 2026-11-01, report round 12 (B3 merged to main 806a9ec; B8 in flig
 | B3 | ack-only cursor advance (design §4.7) leaves the client acking on a heuristic (batch size or a 20 ms gap) because no frame marks a batch end; the design should name a batch-end marker or an explicit replay_done frame |
 | B3 | with real Redis the "empty XRANGE then switch to live" step needs one more XRANGE after the switch to close the race (for B9) |
 | B1 | S1 round-trip test is flaky under full-suite load (1 in ~8), mixes fake and real time; left for B8 |
+| B8 | S1 timing coincidence: server-side pending-offline expires at t+16 s (dead at t+11 s plus 5 s debounce) exactly when the client's first reconnect lands (15 s mirror rule plus 1 s backoff), so a watcher sees offline then online within the same second. Design §5.2's 5 s debounce and §1.4's 15 s mirror rule were sized independently; the retrospective should ask whether the debounce should exceed mirror + first backoff |
 | B7 | the roadmap's `msg` frame omitted `media_size`, `media_mime`, `sha256` from design §6.2; the prototype followed the roadmap and left the row's media columns null. Lesson for the retrospective: the roadmap must quote the design's frame, not paraphrase it |
 
 ## Decisions for the author (A3 queue)
