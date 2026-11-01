@@ -3,30 +3,31 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The Chat System — requirements and stack debate</title>
-<meta name="description" content="Working document for the vntech chat-system design practice: requirements with their reasoning, and the tech-stack decisions still open.">
+<title>The Chat System — design notebook</title>
+<meta name="description" content="Design notebook for the vntech chat-system practice: requirements, numbers, and one section per component with the problem, the decision, how it works, and how we argued it.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{
-  --paper:#F3F5F8; --ink:#16212E; --ink-2:#4A5666; --line:#D3DAE3;
+  --paper:#F3F5F8; --ink:#16212E; --ink-2:#4A5666; --ink-3:#7A8798; --line:#D3DAE3; --card:#FFFFFF;
   --out:#0F7B83; --out-ink:#FFFFFF; --in:#DCE2EA; --in-ink:#16212E;
   --open:#B9771A; --open-bg:#FBF1E1; --decided:#2F6B3C; --decided-bg:#E4F0E6;
-  --card:#FFFFFF; --tick:#9FB4C7; --tick-read:#5ECBD3;
+  --tick:#9FB4C7; --tick-read:#5ECBD3;
+  --c1:#0A96A6; --c2:#5B4FB7; --c3:#B9771A; --grid:#E6EAF0;
 }
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --paper:#0F161F; --ink:#E6ECF2; --ink-2:#9AA8B8; --line:#273341;
-    --out:#15919A; --out-ink:#06161A; --in:#1E2A38; --in-ink:#E6ECF2;
-    --open:#E0A24A; --open-bg:#2C2212; --decided:#7AC48A; --decided-bg:#15281B;
-    --card:#141D28; --tick:#56687C; --tick-read:#7FDDE4;
-  }
-}
-:root[data-theme="dark"]{
-  --paper:#0F161F; --ink:#E6ECF2; --ink-2:#9AA8B8; --line:#273341;
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --paper:#0F161F; --ink:#E6ECF2; --ink-2:#9AA8B8; --ink-3:#6F7F92; --line:#273341; --card:#141D28;
   --out:#15919A; --out-ink:#06161A; --in:#1E2A38; --in-ink:#E6ECF2;
   --open:#E0A24A; --open-bg:#2C2212; --decided:#7AC48A; --decided-bg:#15281B;
-  --card:#141D28; --tick:#56687C; --tick-read:#7FDDE4;
+  --tick:#56687C; --tick-read:#7FDDE4;
+  --c1:#2AA7B3; --c2:#8E80E0; --c3:#BD8436; --grid:#1E2A38;
+}}
+:root[data-theme="dark"]{
+  --paper:#0F161F; --ink:#E6ECF2; --ink-2:#9AA8B8; --ink-3:#6F7F92; --line:#273341; --card:#141D28;
+  --out:#15919A; --out-ink:#06161A; --in:#1E2A38; --in-ink:#E6ECF2;
+  --open:#E0A24A; --open-bg:#2C2212; --decided:#7AC48A; --decided-bg:#15281B;
+  --tick:#56687C; --tick-read:#7FDDE4;
+  --c1:#2AA7B3; --c2:#8E80E0; --c3:#BD8436; --grid:#1E2A38;
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -34,15 +35,22 @@ html{scroll-behavior:smooth}
 body{margin:0;background:var(--paper);color:var(--ink);font:400 17px/1.55 "IBM Plex Sans",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
 a{color:var(--out)}
 a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid var(--out);outline-offset:2px}
-h1,h2,h3{font-family:"IBM Plex Serif",Georgia,serif;font-weight:600;line-height:1.15;margin:0 0 .4em}
+h1,h2,h3,h4{font-family:"IBM Plex Serif",Georgia,serif;font-weight:600;line-height:1.15;margin:0 0 .4em}
 h1{font-size:clamp(2rem,5vw,3.4rem);letter-spacing:-.01em}
-h2{font-size:clamp(1.5rem,3vw,2.1rem);margin-top:0}
-h3{font-size:1.2rem;font-weight:500}
-p{max-width:70ch;margin:0 0 1em}
+h2{font-size:clamp(1.5rem,3vw,2.1rem)}
+h3{font-size:1.25rem;font-weight:500}
+h4{font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:.85rem;font-weight:600;color:var(--ink-2);margin:22px 0 6px}
+p{max-width:72ch;margin:0 0 1em}
+code,pre{font-family:"IBM Plex Mono",ui-monospace,monospace}
+code{font-size:.88em;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre{font-size:.82rem;line-height:1.45;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;max-width:100%}
+pre code{border:0;background:none;padding:0;font-size:inherit}
 .wrap{max-width:1120px;margin:0 auto;padding:0 16px}
-header.top{display:flex;justify-content:space-between;align-items:center;padding:18px 0;border-bottom:1px solid var(--line);font-size:.95rem;color:var(--ink-2)}
-header.top nav a{margin-left:18px;color:var(--ink-2);text-decoration:none}
+header.top{display:flex;justify-content:space-between;align-items:center;padding:18px 0;border-bottom:1px solid var(--line);font-size:.95rem;color:var(--ink-2);gap:12px;flex-wrap:wrap}
+header.top nav{display:flex;flex-wrap:wrap;gap:4px 18px;align-items:center}
+header.top nav a{color:var(--ink-2);text-decoration:none}
 header.top nav a:hover{color:var(--ink)}
+.toggle{background:none;border:1px solid var(--line);color:var(--ink-2);border-radius:999px;padding:4px 12px;font:inherit;font-size:.85rem;cursor:pointer}
 
 /* hero */
 .hero{display:grid;grid-template-columns:1.1fr .9fr;gap:48px;padding:56px 0 40px;align-items:start}
@@ -61,9 +69,8 @@ header.top nav a:hover{color:var(--ink)}
 .m .tick{letter-spacing:-.25em}
 .m.out .tick.read{color:var(--tick-read)}
 .m .file{display:flex;gap:10px;align-items:center;margin-bottom:4px}
-.m .file i{display:block;width:34px;height:34px;border-radius:8px;background:rgba(255,255,255,.25)}
+.m .file i{display:block;width:34px;height:34px;border-radius:8px;background:rgba(0,0,0,.08)}
 .m.out .file i{background:rgba(255,255,255,.3)}
-.m.in .file i{background:rgba(0,0,0,.08)}
 .sys{text-align:center;font-size:.78rem;color:var(--ink-2);padding:4px 0}
 .phone .note{font-size:.8rem;color:var(--ink-2);margin:14px 4px 0}
 .phone .note b{color:var(--ink);font-weight:500}
@@ -77,7 +84,7 @@ section{padding:48px 0;border-top:1px solid var(--line)}
 .ledger{border-top:2px solid var(--ink);margin-top:8px}
 .req{display:grid;grid-template-columns:72px minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr);gap:20px;padding:18px 0;border-bottom:1px solid var(--line)}
 .req .id{font-weight:600;color:var(--ink-2)}
-.req h3{margin:0 0 .3em}
+.req h3{margin:0 0 .3em;font-size:1.1rem}
 .req p{margin:0;font-size:.95rem}
 .req .lbl{font-size:.8rem;color:var(--ink-2);display:block;margin-bottom:4px}
 .req.hdr{padding:10px 0;font-size:.85rem;color:var(--ink-2);border-bottom:1px solid var(--ink)}
@@ -87,84 +94,93 @@ section{padding:48px 0;border-top:1px solid var(--line)}
 .numbers b{display:block;font-family:"IBM Plex Serif",serif;font-size:1.5rem;font-weight:600;margin-bottom:2px}
 .numbers small{color:var(--ink-2)}
 
-/* stack board */
-.layer{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin:18px 0}
-.layer header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 16px;margin-bottom:12px}
-.layer header h3{margin:0;font-size:1.3rem}
-.layer .q{color:var(--ink-2);font-size:.95rem;flex-basis:100%}
-.state{font-size:.78rem;font-weight:500;padding:3px 10px;border-radius:999px;border:1px solid}
+/* decision index */
+.index{width:100%;border-collapse:collapse;font-size:.92rem;margin:8px 0 0}
+.index th,.index td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.index th{font-weight:500;color:var(--ink-2);font-size:.85rem}
+.index td:first-child{font-weight:500}
+.state{font-size:.78rem;font-weight:500;padding:2px 9px;border-radius:999px;border:1px solid;white-space:nowrap}
 .state.open{color:var(--open);background:var(--open-bg);border-color:var(--open)}
 .state.decided{color:var(--decided);background:var(--decided-bg);border-color:var(--decided)}
-.cands{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin:10px 0 16px}
-.cand{border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:.9rem}
-.cand b{display:block;font-weight:600;margin-bottom:3px}
-.cand.lean{border-color:var(--out);box-shadow:inset 0 0 0 1px var(--out)}
-.cand.lean b::after{content:"lean";font-weight:500;font-size:.72rem;color:var(--out);margin-left:8px}
-.cand span{color:var(--ink-2)}
-.verdict{display:grid;grid-template-columns:1fr 1fr;gap:20px;font-size:.95rem}
-.verdict p{margin:0}
-.verdict .lbl{font-size:.8rem;color:var(--ink-2);display:block;margin-bottom:4px}
-.verdict .against{border-left:3px solid var(--open);padding-left:12px}
-.crit{font-size:.9rem;color:var(--ink-2);margin:0 0 12px}
 
-
-/* argument log */
-.log{max-width:84ch;margin-top:8px}
-.arg{position:relative;padding:4px 0 28px 34px;border-left:2px solid var(--line)}
-.arg:last-child{padding-bottom:0}
-.arg::before{content:"";position:absolute;left:-8px;top:10px;width:14px;height:14px;border-radius:50%;background:var(--paper);border:3px solid var(--decided)}
-.arg.open::before{border-color:var(--open)}
-.arg h3{margin:0 0 .3em;font-size:1.25rem}
-.arg .status{font-size:.8rem;font-weight:500;margin-left:10px;vertical-align:middle}
-.arg .status.d{color:var(--decided)} .arg .status.o{color:var(--open)}
-.arg p{font-size:.97rem;margin:0 0 .8em}
-.arg .side{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:10px 0 14px}
-.arg .side > div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:.93rem}
-.arg .side .lbl{display:block;font-size:.78rem;color:var(--ink-2);margin-bottom:4px}
-.arg .side .for{border-top:3px solid var(--decided)} .arg .side .against{border-top:3px solid var(--open)}
-.arg .ruling{border-left:3px solid var(--decided);padding:6px 14px;background:var(--decided-bg);border-radius:0 8px 8px 0;font-size:.95rem}
-.arg.open .ruling{border-color:var(--open);background:var(--open-bg)}
-.arg dl{margin:0 0 .8em;font-size:.95rem}
-.arg dt{font-weight:600;margin-top:10px}
-.arg dd{margin:2px 0 0}
-.arg table{border-collapse:collapse;font-size:.9rem;margin:8px 0 14px;width:100%}
-.arg th,.arg td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-.arg th{color:var(--ink-2);font-weight:500}
-.arg code{font-size:.9em;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px}
-@media (max-width:700px){.arg .side{grid-template-columns:1fr}}
-
-/* asks */
-.asks{counter-reset:ask;max-width:70ch;padding:0;margin:0;list-style:none}
+/* topic */
+.topic{padding:48px 0;border-top:1px solid var(--line)}
+.topic > header{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:40px;margin-bottom:8px}
+.topic > header .kicker{font-size:.85rem;color:var(--ink-2);margin:0 0 6px}
+.topic > header p.sum{font-size:1.05rem;color:var(--ink-2)}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px 40px;align-items:start}
+.cols > div{min-width:0}
+.cols .wide{grid-column:1 / -1}
+.decision{border-left:3px solid var(--decided);background:var(--decided-bg);padding:10px 16px;border-radius:0 10px 10px 0;margin:6px 0 14px}
+.decision p{margin:0 0 .5em}.decision p:last-child{margin:0}
+.decision.open{border-color:var(--open);background:var(--open-bg)}
+figure{margin:8px 0 14px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px 10px}
+figure figcaption{font-size:.85rem;color:var(--ink-2);margin:0 0 8px}
+figure figcaption b{color:var(--ink);font-weight:500}
+figure svg{display:block;width:100%;height:auto;font-family:"IBM Plex Sans",system-ui,sans-serif}
+figure .tbl{font-size:.82rem;margin-top:8px}
+figure .tbl summary{cursor:pointer;color:var(--ink-2)}
+figure table{border-collapse:collapse;margin-top:6px;width:100%}
+figure td,figure th{padding:4px 8px;border-bottom:1px solid var(--line);text-align:left}
+figure th{font-weight:500;color:var(--ink-2)}
+.chart-tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--paper);font-size:.8rem;padding:5px 9px;border-radius:6px;opacity:0;transition:opacity .12s;z-index:9;white-space:nowrap}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.8rem;color:var(--ink-2);margin:6px 0 2px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+table.plain{border-collapse:collapse;font-size:.9rem;width:100%;margin:6px 0 14px}
+table.plain th,table.plain td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+table.plain th{color:var(--ink-2);font-weight:500}
+.diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0 14px}
+.diagram svg{display:block;width:100%;height:auto;font-family:"IBM Plex Sans",system-ui,sans-serif}
+.diagram .cap{font-size:.85rem;color:var(--ink-2);margin:6px 0 0}
+.d-box{fill:var(--paper);stroke:var(--line);stroke-width:1.4}
+.d-box.hot{stroke:var(--c1);stroke-width:2}
+.d-box.cold{stroke:var(--c3);stroke-width:2}
+.d-box.store{stroke:var(--c2);stroke-width:2}
+.d-t{font-size:12.5px;fill:var(--ink);font-weight:500}
+.d-s{font-size:11px;fill:var(--ink-2)}
+.d-e{fill:none;stroke:var(--ink-3);stroke-width:1.6;marker-end:url(#ar)}
+.d-e.hot{stroke:var(--c1);stroke-width:2}
+.d-e.cold{stroke:var(--c3);stroke-dasharray:5 4}
+.d-l{font-size:11px;fill:var(--ink-2);paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
+.rej{font-size:.9rem}
+details.argued{margin:18px 0 0;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+details.argued summary{cursor:pointer;padding:10px 14px;font-weight:500;color:var(--ink-2);font-size:.92rem}
+details.argued[open] summary{border-bottom:1px solid var(--line)}
+details.argued .body{padding:12px 16px 4px;font-size:.93rem}
+details.argued .body p{max-width:84ch}
+details.argued .side{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:8px 0 12px}
+details.argued .side > div{border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+details.argued .side .lbl{display:block;font-size:.78rem;color:var(--ink-2);margin-bottom:4px}
+details.argued .side .for{border-top:3px solid var(--decided)} details.argued .side .against{border-top:3px solid var(--open)}
+.asks{counter-reset:ask;max-width:76ch;padding:0;margin:0;list-style:none}
 .asks li{counter-increment:ask;padding:12px 0 12px 44px;position:relative;border-bottom:1px solid var(--line)}
 .asks li::before{content:counter(ask);position:absolute;left:0;top:12px;width:30px;height:30px;border-radius:50%;background:var(--out);color:var(--out-ink);display:grid;place-items:center;font-weight:600;font-size:.9rem}
 footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
-.toggle{background:none;border:1px solid var(--line);color:var(--ink-2);border-radius:999px;padding:4px 12px;font:inherit;font-size:.85rem;cursor:pointer}
 
 @media (max-width:900px){
   .hero{grid-template-columns:1fr;gap:28px}
   .phone{justify-self:start}
-  .intro{grid-template-columns:1fr;gap:12px}
+  .intro,.topic > header{grid-template-columns:1fr;gap:12px}
+  .cols{grid-template-columns:1fr}
   .req{grid-template-columns:52px 1fr;gap:8px 14px}
   .req > div:nth-child(n+3){grid-column:2}
   .req.hdr > div:nth-child(n+3){display:none}
-  .verdict{grid-template-columns:1fr}
+  details.argued .side{grid-template-columns:1fr}
 }
-@media (max-width:600px){
-  header.top nav{display:none}
-  body{font-size:16px}
-}
+@media (max-width:600px){ body{font-size:16px} header.top nav a{font-size:.85rem} }
 </style>
 </head>
 <body>
+<div class="chart-tip" id="tip" role="status" aria-live="polite"></div>
 <div class="wrap">
 <header class="top">
   <div>vntech · The Chat System</div>
   <nav aria-label="Sections">
     <a href="#requirements">Requirements</a>
-    <a href="#scale">Scale</a>
-    <a href="#stack">Stack</a>
-    <a href="#arguments">Arguments</a>
-    <a href="#asks">Open questions</a>
+    <a href="#numbers">Numbers</a>
+    <a href="#components">Components</a>
+    <a href="#followups">Follow-ups</a>
     <button class="toggle" id="theme" type="button" aria-label="Toggle dark mode">Dark</button>
   </nav>
 </header>
@@ -172,390 +188,580 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
 <section class="hero" style="border-top:0">
   <div>
     <h1>Before we build anything, let's agree on what "a chat system" has to survive.</h1>
-    <p class="lede">This page is the argument, not the answer. Every requirement sits next to the reason it exists and the way to challenge it. Every stack layer lists the candidates, the lean, and the strongest case against it. Nothing here is decided until it says so.</p>
-    <p>Source of truth for the frozen brief: <a href="specification.md">docs/specification.md</a>. This page is where we change our minds first.</p>
+    <p class="lede">A design notebook, organised by component. Each component has the problem it solves, the numbers that constrain it, the decision, how it works, what was rejected, and a fold-out of how we argued it. Open questions are marked, and there are few left.</p>
+    <p>Source documents: <a href="specification.md">specification.md</a> (the brief), <a href="estimation.md">estimation.md</a> (the derivations), <a href="design.md">design.md</a> (the full write-ups), <a href="diagrams/high-level.html">the architecture diagram</a>.</p>
   </div>
-
   <div class="phone" aria-label="Example conversation illustrating the flows the design must handle">
-    <div class="bar">
-      <div class="avatar">K</div>
-      <div><div style="font-weight:500">Khanh</div><div class="presence">online</div></div>
-    </div>
+    <div class="bar"><div class="avatar">K</div><div><div style="font-weight:500">Khanh</div><div class="presence">online</div></div></div>
     <div class="msgs">
       <div class="sys">Khanh joined · 3 devices</div>
       <div class="m out">Does the sender get an ack before or after the store commits?<div class="meta"><span>21:02</span><span class="tick read">✓✓</span></div></div>
       <div class="m in">After. Otherwise "sent" is a lie when the primary dies.<div class="meta"><span>21:02</span></div></div>
       <div class="m out"><div class="q">After. Otherwise "sent" is a lie…</div>And for a 100-person group, ack once, fan out async?<div class="meta"><span>21:03</span><span class="tick">✓✓</span></div></div>
-      <div class="m in"><div class="file"><i></i><div>arch-v1.mp4<br><small>9.8 MB · full size</small></div></div>Draft of the fan-out path.<div class="meta"><span>21:05</span></div></div>
+      <div class="m in"><div class="file"><i></i><div>arch-v1.mp4<br><small>9.8 MB · client-compressed</small></div></div>Draft of the fan-out path.<div class="meta"><span>21:05</span></div></div>
       <div class="sys">Khanh went offline · last seen 21:06</div>
       <div class="m out">Queued for you then. Read it on whichever device wakes up first.<div class="meta"><span>21:07</span><span class="tick">✓</span></div></div>
     </div>
-    <p class="note">Every bubble above is a flow the design must handle: <b>ack timing</b>, <b>read receipts</b>, <b>quoted reply</b>, <b>10 MB media</b>, <b>presence within 10 s</b>, <b>offline queue</b>, <b>multi-device</b>.</p>
+    <p class="note">Every bubble is a flow the design has to handle: <b>ack timing</b>, <b>read receipts</b>, <b>quoted reply</b>, <b>media</b>, <b>presence</b>, <b>offline queue</b>, <b>multi-device</b>.</p>
   </div>
 </section>
 
+<!-- ===================== REQUIREMENTS ===================== -->
 <section id="requirements">
   <div class="intro">
     <h2>Requirements, and why each one is there</h2>
-    <p>A requirement without a reason is a requirement you can't push back on. The "why" column is what the requirement is protecting; the "challenge" column is the question that would remove it or change its shape. If a challenge wins, the spec changes.</p>
+    <p>A requirement without a reason cannot be pushed back on. The "why" column is what the requirement protects; the "challenge" column is the question that would remove it or change its shape. Several were reshaped by the component discussions below.</p>
   </div>
-
   <div class="ledger">
-    <div class="req hdr"><div>ID</div><div>Requirement</div><div>Why it's here</div><div>Challenge this</div></div>
-
-    <div class="req"><div class="id">F1</div><div><h3>One-to-one chat</h3><p>Two users exchange text in real time.</p></div><div><span class="lbl">Why</span><p>The base case every other flow degrades to. If this isn't fast and durable, nothing else matters.</p></div><div><span class="lbl">Challenge</span><p>Is 1:1 just a group of two? If yes, do we design one path or two?</p></div></div>
-
-    <div class="req"><div class="id">F2</div><div><h3>Group chat, up to 100 members</h3><p>One message, many recipients, each with several devices.</p></div><div><span class="lbl">Why</span><p>Forces the fan-out decision. At 100 members × 1.5 devices one send becomes 150 deliveries.</p></div><div><span class="lbl">Challenge</span><p>Why 100 and not 500 or 100 000? The ceiling decides whether fan-out-on-write survives.</p></div></div>
-
-    <div class="req"><div class="id">F3</div><div><h3>Real-time delivery</h3><p>p50 under 100 ms, p99 under 500 ms, both parties online.</p></div><div><span class="lbl">Why</span><p>Sets the protocol: anything with request overhead per message fails the p50.</p></div><div><span class="lbl">Challenge</span><p>Measured from where to where? Device-to-device includes the mobile radio; we can't control that.</p></div></div>
-
-    <div class="req"><div class="id">F4</div><div><h3>Offline delivery, notify, mark unread</h3><p>Messages to an offline user wait, then arrive on reconnect. Every new message pushes a notification and marks the conversation unread until opened.</p></div><div><span class="lbl">Why</span><p>Separates "delivered to a server" from "delivered to a person". Introduces the per-user inbox and the per-conversation unread state.</p></div><div><span class="lbl">Challenge</span><p>Five devices online: who gets the push, and does opening on one clear the badge on the others?</p></div></div>
-
-    <div class="req"><div class="id">F5</div><div><h3>Persistent history</h3><p>Any device can page back through the conversation.</p></div><div><span class="lbl">Why</span><p>The write-heavy, read-recent access pattern is what picks the database.</p></div><div><span class="lbl">Challenge</span><p>Does history belong on the server at all? WhatsApp historically kept it on the device.</p></div></div>
-
-    <div class="req"><div class="id">F6</div><div><h3>Multi-device sync</h3><p>Up to 5 devices per user share one conversation state.</p></div><div><span class="lbl">Why</span><p>Turns "deliver to user" into "deliver to each device cursor". This is the subtle one.</p></div><div><span class="lbl">Challenge</span><p>Do read receipts sync across the reader's own devices, or only to the sender?</p></div></div>
-
-    <div class="req"><div class="id">F7</div><div><h3>Online indicator, must have</h3><p>Online, offline, or last seen, for the people on screen. Detected within 10 s, visible to watchers within 15 s, 5 s debounce.</p></div><div><span class="lbl">Why</span><p>Presence is the most expensive cheap-looking feature, but the cost is in propagation, not detection.</p></div><div><span class="lbl">Challenge</span><p>Answered: delivered by subscription only (argument 10). Still worth asking: does any screen need presence for people <em>not</em> on it?</p></div></div>
-
-    <div class="req"><div class="id">F8</div><div><h3>Message status, per member</h3><p>Sent, delivered, read. In groups the sender sees <em>who</em> read, not only how many.</p></div><div><span class="lbl">Why</span><p>Each transition is an event flowing backwards. Per member in a 100-group is 100 read events per message unless they are coalesced.</p></div><div><span class="lbl">Challenge</span><p>Store a receipt per message per member, or one read cursor per member per conversation? Decided: cursor. See design.md §3.</p></div></div>
-
-    <div class="req"><div class="id">F9</div><div><h3>Media up to 10 MB, server never processes it</h3><p>Images, video, files. No server-side pipeline; the client compresses images by default and may send originals. One per message.</p></div><div><span class="lbl">Why</span><p>Blob bytes dwarf text bytes by orders of magnitude and must never ride the real-time path. "No pipeline" keeps a second system out of this design.</p></div><div><span class="lbl">Challenge</span><p>Answered: "full size" meant simplicity, not fidelity, so client compression is in (argument 11). Still open: should the 10 % media rate be challenged too?</p></div></div>
-
-    <div class="req"><div class="id">F11</div><div><h3>Auto-reconnect</h3><p>A client reconnects by itself when the network returns and resumes with no gap and no duplicates.</p></div><div><span class="lbl">Why</span><p>Mobile radios drop constantly. Without this, "real-time" is only true on Wi-Fi.</p></div><div><span class="lbl">Challenge</span><p>Already designed in design.md §1.4: jittered backoff, device cursor, client message ID for dedup. Is there a case it misses?</p></div></div>
-
-    <div class="req"><div class="id">F10</div><div><h3>Quoted reply</h3><p>A message references one earlier message in the same conversation. Threads stay out.</p></div><div><span class="lbl">Why</span><p>Cheap to add, but it is the first feature where a message depends on another message.</p></div><div><span class="lbl">Challenge</span><p>Copy the quoted text into the reply, or fetch by ID? Deleted parents decide this.</p></div></div>
+    <div class="req hdr"><div>ID</div><div>Requirement</div><div>Why it's here</div><div>Challenge, and outcome</div></div>
+    <div class="req"><div class="id">F1</div><div><h3>One-to-one chat</h3><p>Two users exchange text in real time.</p></div><div><span class="lbl">Why</span><p>The base case every other flow degrades to.</p></div><div><span class="lbl">Challenge</span><p>Is 1:1 just a group of two? Yes: one conversation table, one path.</p></div></div>
+    <div class="req"><div class="id">F2</div><div><h3>Group chat, up to 100 members</h3><p>One message, many recipients, each with several devices.</p></div><div><span class="lbl">Why</span><p>Forces the fan-out decision: 100 members × 1.5 devices is 150 deliveries.</p></div><div><span class="lbl">Challenge</span><p>Why 100? Answered: it is the product today; 10 k+ communities are a Discord-style product with its own design pass.</p></div></div>
+    <div class="req"><div class="id">F3</div><div><h3>Real-time delivery</h3><p>p50 under 100 ms, p99 under 500 ms, measured server to server.</p></div><div><span class="lbl">Why</span><p>Sets the protocol: anything with request overhead per message fails the p50.</p></div><div><span class="lbl">Challenge</span><p>Measured from where? Answered: chat-server ingress to recipient-socket write. The whole budget is inside our infrastructure.</p></div></div>
+    <div class="req"><div class="id">F4</div><div><h3>Offline delivery, notify, mark unread</h3><p>Messages to an offline user wait and arrive on reconnect; every new message pushes a notification and marks the conversation unread.</p></div><div><span class="lbl">Why</span><p>Separates "delivered to a server" from "delivered to a person".</p></div><div><span class="lbl">Challenge</span><p>How long do we hold them? Answered: the fast path covers 24 h; beyond that the device loads from persistent history.</p></div></div>
+    <div class="req"><div class="id">F5</div><div><h3>Persistent history, kept forever</h3><p>Any device can page back through the conversation.</p></div><div><span class="lbl">Why</span><p>The write-heavy, read-recent access pattern is what picks the database.</p></div><div><span class="lbl">Challenge</span><p>Server-side or device-only? Answered: server-side, forever; retention is a tiering question.</p></div></div>
+    <div class="req"><div class="id">F6</div><div><h3>Multi-device sync</h3><p>Up to 5 devices per user share one conversation state.</p></div><div><span class="lbl">Why</span><p>Turns "deliver to user" into "deliver to each device cursor".</p></div><div><span class="lbl">Challenge</span><p>Do read receipts sync across the reader's own devices? Yes: one read cursor per user, not per device.</p></div></div>
+    <div class="req"><div class="id">F7</div><div><h3>Online indicator, must have</h3><p>For the people on screen. Detected within 10 s, visible within 15 s, 5 s debounce.</p></div><div><span class="lbl">Why</span><p>The most expensive cheap-looking feature; the cost is in propagation, not detection.</p></div><div><span class="lbl">Challenge</span><p>To whom? Answered: only to who is looking (subscription), never to a whole contact list.</p></div></div>
+    <div class="req"><div class="id">F8</div><div><h3>Message status, per member</h3><p>Sent, delivered, read. In groups the sender sees who read.</p></div><div><span class="lbl">Why</span><p>Each transition is an event flowing backwards.</p></div><div><span class="lbl">Challenge</span><p>Per member is 100 events per message if stored per message. Answered: one read cursor per member per conversation.</p></div></div>
+    <div class="req"><div class="id">F9</div><div><h3>Media up to 10 MB, server never processes it</h3><p>No server-side pipeline; the client compresses images by default.</p></div><div><span class="lbl">Why</span><p>Blob bytes dwarf text bytes and must never ride the real-time path.</p></div><div><span class="lbl">Challenge</span><p>Was "full size" about fidelity or simplicity? Answered: simplicity, so client compression is in.</p></div></div>
+    <div class="req"><div class="id">F10</div><div><h3>Quoted reply</h3><p>A message references one earlier message in the same conversation. Threads stay out.</p></div><div><span class="lbl">Why</span><p>The first feature where a message depends on another message.</p></div><div><span class="lbl">Challenge</span><p>Copy the quote or fetch by ID? Fetch by ID, placeholder if the parent is gone.</p></div></div>
+    <div class="req"><div class="id">F11</div><div><h3>Auto-reconnect</h3><p>A client reconnects by itself when the network returns and resumes with no gap and no duplicates.</p></div><div><span class="lbl">Why</span><p>Mobile radios drop constantly; without this "real-time" is only true on Wi-Fi.</p></div><div><span class="lbl">Challenge</span><p>Designed in the transport component: jittered backoff, device cursor, client message ID.</p></div></div>
   </div>
 </section>
 
-<section id="scale">
+<!-- ===================== NUMBERS ===================== -->
+<section id="numbers">
   <div class="intro">
     <h2>The numbers we are designing against</h2>
-    <p>These are assumptions, not measurements. They exist so that every stack decision below can point at a number instead of a feeling. Derivations belong in <code>docs/estimation.md</code>; the headline figures are here so the debate has them in view.</p>
+    <p>Assumptions, not measurements, so that every decision below can point at a number instead of a feeling. Derivations are in <a href="estimation.md">estimation.md</a>; the two charts show the shape that matters: which paths are busy, and which store is big.</p>
   </div>
   <div class="numbers">
-    <div><b>50 M</b>daily active users<br><small>10 M concurrent at peak</small></div>
+    <div><b>50 M</b>daily active users<br><small>10 M concurrent at peak, 15 M sockets</small></div>
     <div><b>2 B</b>messages per day<br><small>≈ 23 k/s average, ≈ 115 k/s peak</small></div>
-    <div><b>100</b>max group members<br><small>× 1.5 devices = 150 deliveries per send</small></div>
-    <div><b>10 MB</b>media cap, no server processing<br><small>10 % of messages carry media, 500 KB average after client compression</small></div>
+    <div><b>≈ 6</b>deliveries per message<br><small>60 % 1:1, 40 % groups of 8, 1.5 devices</small></div>
+    <div><b>100</b>max group members<br><small>150 deliveries, the worst case</small></div>
     <div><b>≈ 400 GB</b>text + metadata per day<br><small>≈ 730 TB over 5 years, before replication</small></div>
     <div><b>≈ 100 TB</b>media per day<br><small>250 times the text volume</small></div>
   </div>
-  <p>The two numbers that should change your mind about something: the peak write rate rules out any store that needs a single writer, and the media volume means the blob store is a bigger system than the chat store. The full derivations, and the six decisions they changed, are in <a href="estimation.md">estimation.md</a>.</p>
-</section>
-
-<section id="stack">
-  <div class="intro">
-    <h2>Choosing the stack, one layer at a time</h2>
-    <p>Each layer gets the question it has to answer, the candidates, the criteria that actually discriminate, a lean, and the best argument against that lean. "Open" means we have not argued it yet. A layer only turns "decided" after the counterpoint has been answered in writing.</p>
-    <p>The high-level picture these layers add up to is in the <a href="diagrams/high-level.html">architecture diagram</a> (interactive; use the three guided views for the send path, the offline path, and history and media).</p>
-  </div>
-
-  <article class="layer">
-    <header><h3>Real-time transport</h3><span class="state decided">decided</span><p class="q">How do 10 M clients hold a connection and receive pushes without polling?</p></header>
-    <p class="crit">Criteria: bidirectional, works through corporate proxies and mobile carriers, reconnect cost, library maturity on iOS, Android and web.</p>
-    <div class="cands">
-      <div class="cand lean"><b>WebSocket</b><span>Bidirectional, universal client support, one TCP connection per device. Needs explicit heartbeat and reconnect logic.</span></div>
-      <div class="cand"><b>Long polling</b><span>Works everywhere, but one HTTP request per message and per timeout; p50 target is hard to hit.</span></div>
-      <div class="cand"><b>Server-sent events + HTTP</b><span>Push only; sends go over separate requests. Simpler, but two paths to reason about.</span></div>
-      <div class="cand"><b>MQTT / XMPP</b><span>Purpose-built messaging protocols. Great fit, smaller talent pool, heavier client story on web.</span></div>
-    </div>
-    <div class="verdict">
-      <div><span class="lbl">Decision</span><p>WebSocket for the real-time path; plain HTTPS for login, history paging and media. Server-initiated ping every 5 s, two misses = dead (10 s, matching F7); client reconnects with jittered backoff and resumes from its device cursor. Heartbeats never touch Redis. Full write-up: <a href="design.md">design.md §1</a>.</p></div>
-      <div class="against"><span class="lbl">Counterpoint, answered</span><p>"You end up implementing half of MQTT yourself." True, and §1 is that half: ping/pong, resume cursor, client-side dedup key. It is about 200 lines per platform, and we keep the ubiquity of WebSocket on web.</p></div>
-    </div>
-  </article>
-
-  <article class="layer">
-    <header><h3>Chat server runtime</h3><span class="state decided">decided for the prototype</span><p class="q">What holds millions of idle connections cheaply and routes messages between them?</p></header>
-    <p class="crit">Criteria: memory per idle connection, scheduler behaviour under 100 k connections per node, what the team can operate at 3 a.m.</p>
-    <div class="cands">
-      <div class="cand"><b>Kotlin on Netty (Ktor / Micronaut)</b><span>The team's stack. Netty handles the connection count; the JVM wants tuning for memory per socket.</span></div>
-      <div class="cand"><b>Elixir / Erlang (BEAM)</b><span>The textbook answer. WhatsApp and Discord's gateway. Per-connection processes, built-in supervision. New language for the team.</span></div>
-      <div class="cand"><b>Go</b><span>Goroutine per connection, small memory footprint, simple deploys. No actor model; you build supervision yourself.</span></div>
-      <div class="cand lean"><b>Node.js + TypeScript</b><span>Fastest to prototype; <code>ws</code> exposes ping/pong directly. Single-threaded, so it proves the protocol, not the connection count.</span></div>
-    </div>
-    <div class="verdict">
-      <div><span class="lbl">Decision</span><p>Node.js with TypeScript for the prototype, because the prototype proves protocol correctness and that is the fastest path. The production runtime is deliberately not decided; Kotlin on Netty remains the default for real work. Argument 7 below.</p></div>
-      <div class="against"><span class="lbl">Counterpoint, parked</span><p>BEAM is the language this problem was shaped by, and a Node prototype teaches nothing about connections per node. Both true, both outside the prototype's stated goal.</p></div>
-    </div>
-  </article>
-
-  <article class="layer">
-    <header><h3>Message store</h3><span class="state decided">decided</span><p class="q">What absorbs 115 k writes per second and serves "last 50 messages in this conversation" and "everything since cursor X"?</p></header>
-    <p class="crit">Criteria: write throughput without a single primary, partition by conversation, range scan by message ID, 730 TB of growth, operational burden.</p>
-    <div class="cands">
-      <div class="cand lean"><b>Cassandra / ScyllaDB</b><span>Partition on conversation, cluster on message ID. Discord's path. Wide partitions and tombstones are the known traps.</span></div>
-      <div class="cand"><b>PostgreSQL, partitioned + sharded</b><span>Familiar, transactional, excellent tooling. Sharding by conversation is manual work and the ceiling arrives at the primary.</span></div>
-      <div class="cand"><b>DynamoDB</b><span>Same data model as Cassandra, zero operations, pay per request. Cost at 2 B writes/day is a real line item.</span></div>
-      <div class="cand"><b>HBase</b><span>Facebook Messenger's original choice. Strong ordering per row, heavier to run than the rest.</span></div>
-    </div>
-    <div class="verdict">
-      <div><span class="lbl">Decision</span><p>Wide-column, partition key (conversation, month bucket), clustering by message ID descending. All history kept for 5 years; open loads the newest 50, scroll-up pages by cursor over HTTPS, never over the socket. Two cursors per device: oldest-loaded (back) and last-synced (forward). Full write-up: <a href="design.md">design.md §2</a>.</p></div>
-      <div class="against"><span class="lbl">Counterpoint, parked</span><p>"Nobody has run Cassandra in anger" is a real risk, but the frame chosen is the canonical design, so the practice is to learn it. Revisit if the frame changes.</p></div>
-    </div>
-  </article>
-
-  <article class="layer">
-    <header><h3>Message ID</h3><span class="state decided">decided</span><p class="q">How does every message get an ID that is unique, sortable within a conversation, and mintable at 115 k/s with no coordinator?</p></header>
-    <div class="cands">
-      <div class="cand lean"><b>Snowflake-style (time + node + sequence)</b><span>64-bit, roughly time-ordered, generated locally. Clock skew between nodes is the risk.</span></div>
-      <div class="cand"><b>Per-conversation sequence</b><span>Perfect ordering within a chat. Needs a counter per conversation, which is a hot key for busy groups.</span></div>
-      <div class="cand"><b>Database-assigned</b><span>Simple, but ties ID minting to the store's write path and its availability.</span></div>
-    </div>
-    <div class="verdict">
-      <div><span class="lbl">Decision</span><p>Snowflake minted in the chat server; the timestamp inside the ID also selects the month bucket for pagination, so a scroll-up cursor needs no lookup.</p></div>
-      <div class="against"><span class="lbl">Counterpoint, accepted</span><p>Two messages in the same millisecond from different servers may swap. A quoted reply carries its parent ID explicitly, so the chain is still correct even if display order flips.</p></div>
-    </div>
-  </article>
-
-  <article class="layer">
-    <header><h3>Routing, presence and session state</h3><span class="state decided">decided</span><p class="q">When a message arrives for Khanh, which server holds Khanh's three connections, and is Khanh online right now?</p></header>
-    <p class="crit">Criteria: sub-millisecond lookups, TTL-based expiry for heartbeats, pub/sub for presence fan-out, survives a node loss without a thundering reconnect.</p>
-    <div class="cands">
-      <div class="cand lean"><b>Redis (cluster)</b><span>Session map with TTL, presence with TTL, pub/sub for fan-out. One system, well understood. Not a durable store.</span></div>
-      <div class="cand"><b>etcd / ZooKeeper</b><span>Right for server discovery, wrong for 10 M user sessions churning every few seconds.</span></div>
-      <div class="cand"><b>In-memory on the chat server + gossip</b><span>No external dependency, but every server must know every other's users. Does not scale past a few nodes.</span></div>
-    </div>
-    <div class="verdict">
-      <div><span class="lbl">Decision</span><p>Redis for the routing table and presence state with a slow lease (2 min renew, 5 min TTL); detection is local to the chat server; presence pushed only to subscribed watchers via a pub/sub channel per user. etcd or the orchestrator for chat-server discovery only. Argument 10 below.</p></div>
-      <div class="against"><span class="lbl">Counterpoint, answered</span><p>"10 M presence writes per heartbeat interval." Only if the lease is tied to detection; it is not. Heartbeats never touch Redis, and the lease is a safety net behind service discovery, so it renews every 2 minutes.</p></div>
-    </div>
-  </article>
-
-  <article class="layer">
-    <header><h3>Fan-out and queueing</h3><span class="state decided">decided</span><p class="q">Between "stored" and "on the recipient's screen", is there a queue, and who consumes it?</p></header>
-    <div class="cands">
-      <div class="cand"><b>Kafka</b><span>Durable, replayable, partition per user or per conversation. Adds latency and a large operational surface.</span></div>
-      <div class="cand"><b>Redis Streams / pub-sub</b><span>Chosen as the queue backing with a 24 h window. Losing a shard sends its devices to the slow path, which is rate-limited for that reason.</span></div>
-      <div class="cand lean"><b>Direct push + per-device sync queue on Redis Streams</b><span>The textbook path: store, push straight to online recipients' servers, and append to each device's sync queue for cursor catch-up and offline delivery.</span></div>
-      <div class="cand"><b>NATS JetStream</b><span>Lighter than Kafka, durable streams, less ecosystem.</span></div>
-    </div>
-    <div class="verdict">
-      <div><span class="lbl">Decision</span><p>Direct push for online recipients; per-device sync queue on Redis Streams with a 24 h window for catch-up; slow path from the store beyond that. Backpressure: bounded per-destination buffer, drop to the device's catch-up path on timeout. Arguments 6, 8 and 9 below.</p></div>
-      <div class="against"><span class="lbl">Counterpoint, answered</span><p>"Redis is not durable." Correct, and the queue is a fast path, not a source of truth: the message store is. A shard loss costs latency for its devices, bounded by rate-limiting the slow path.</p></div>
-    </div>
-  </article>
-
-  <article class="layer">
-    <header><h3>Media storage and delivery</h3><span class="state decided">decided</span><p class="q">Where do 400 TB a day of full-size blobs live, and how do 100 recipients fetch the same 10 MB file?</p></header>
-    <div class="cands">
-      <div class="cand lean"><b>Object storage + CDN, pre-signed URLs</b><span>Client uploads straight to the bucket, chat server never touches bytes. Short-lived signed URLs handle authorization.</span></div>
-      <div class="cand"><b>Upload through the API servers</b><span>Central place to enforce the 10 MB limit and scan content. Every byte crosses your fleet twice.</span></div>
-      <div class="cand"><b>Peer-to-peer / device relay</b><span>Zero server storage; falls apart the moment the sender goes offline.</span></div>
-    </div>
-    <div class="verdict">
-      <div><span class="lbl">Decision</span><p>Direct-to-bucket upload with a pre-signed URL that carries the size cap; message sent after upload completes. Client compresses images by default. Regional buckets; CDN in front of group media only. Argument 11 below.</p></div>
-      <div class="against"><span class="lbl">Counterpoint, answered</span><p>"A CDN is pure cost for 1:1." Agreed, which is why the URL host is chosen per conversation type: bucket for 1:1, CDN for groups.</p></div>
-    </div>
-  </article>
-
-  <article class="layer">
-    <header><h3>Push notifications</h3><span class="state decided">decided</span><p class="q">How does an offline phone learn there is something waiting?</p></header>
-    <div class="cands">
-      <div class="cand lean"><b>APNs + FCM via a notification service</b><span>The only way onto the device when the app is closed. Carry a hint, never the message body.</span></div>
-    </div>
-    <div class="verdict">
-      <div><span class="lbl">Decision</span><p>There is no real alternative; the only questions are what the payload contains and how to avoid notifying five devices for one message.</p></div>
-      <div class="against"><span class="lbl">Still worth arguing</span><p>Should the push carry the message text for the lock screen preview, given it leaves our infrastructure?</p></div>
-    </div>
-  </article>
-</section>
-
-
-<section id="arguments">
-  <div class="intro">
-    <h2>Arguments and decisions, in the order we had them</h2>
-    <p>This is the record of the debate so far: what was asked, what each side said, and what we settled or left open. Read it top to bottom and you have the reasoning behind every "decided" badge on the board above. Full write-ups with numbers live in <a href="design.md">design.md</a>.</p>
-  </div>
-
-  <div class="log">
-
-  <article class="arg">
-    <h3>1. Canonical design, or what we would actually run?<span class="status d">decided: canonical</span></h3>
-    <p>The first question on the page, because it sets the frame for every other one. "Canonical" means the architecture in Alex Xu's <em>System Design Interview</em> chapter 12: stateless API servers, stateful chat servers over WebSocket, a presence service, a wide-column message store, a per-user message sync queue, Snowflake IDs, push notifications.</p>
-    <div class="side">
-      <div class="for"><span class="lbl">Why canonical</span>This is practice. The point is to learn why chat systems look the way they do, and the textbook is the distilled version of WhatsApp, Messenger and Discord. Picking the familiar stack would be picking the lesson we skip.</div>
-      <div class="against"><span class="lbl">Why "what we'd run"</span>A Kotlin and Postgres system we can operate at 3 a.m. beats a Cassandra cluster we misconfigure. Practice that does not transfer to work is entertainment.</div>
-    </div>
-    <p class="ruling"><strong>Decided: canonical.</strong> This closed four layers at once: WebSocket transport, wide-column store, Snowflake IDs, direct push with a sync queue. It did <em>not</em> close the programming language, because the book never names one.</p>
-  </article>
-
-  <article class="arg">
-    <h3>2. Cassandra over Postgres: the five questions<span class="status d">decided: wide-column</span></h3>
-    <p>Truc asked five pointed questions about the store. The answers are the real argument behind the decision.</p>
-    <dl>
-      <dt>Fast write and read?</dt>
-      <dd>The pattern is append-heavy, read-recent, almost never update. Cassandra writes go to a commit log plus an in-memory table: no B-tree to rebalance, no primary to funnel through, so write throughput scales with node count. Postgres reaches 115 k writes/s only by sharding by conversation, and every shard still has one primary as the ceiling. Reads of "newest 50 in this conversation" are fast on both; the write path and the growth to 730 TB are what differ.</dd>
-      <dt>Do we need transactions?</dt>
-      <dd>A message insert touches one row. The only multi-row operation, "store message, then append to N sync queues", is deliberately <em>not</em> atomic: partial fan-out is retried idempotently because the message ID is already fixed. Group membership changes are rare enough for a lightweight transaction or an outbox. We give up cross-row ACID because the domain does not need it.</dd>
-      <dt>Where are we in CAP and ACID?</dt>
-      <dd>Cassandra is AP: quorum writes on replication factor 3 survive one node loss and are readable immediately by a quorum reader. We trade linearizability for availability, which is what chat wants: a partition should degrade to "your message is delayed", never "you cannot send". The price is duplicates, which is why every message carries a client-generated ID for dedup. On ACID we keep atomicity and durability per row, and isolation only within a partition. That is exactly the scope we use.</dd>
-      <dt>Why sort by Snowflake ID and not <code>created_at</code>?</dt>
-      <dd>You can, but you pay twice. Two messages in the same millisecond in one conversation collide unless you add a tiebreaker, so the key becomes <code>(created_at, message_id)</code> anyway. And a timestamp makes an ambiguous pagination cursor: <code>before=21:03:00.417</code> cannot say which of three messages at that millisecond it means. A Snowflake ID is timestamp plus tiebreaker in one 64-bit integer, so it is both the sort key and the cursor. The cost is clock skew between chat servers, accepted because a quoted reply carries its parent ID explicitly and NTP keeps skew under human perception. <code>created_at</code> stays as a plain column for display and bucket selection.</dd>
-      <dt>Multiple chat servers: do we need sticky sessions?</dt>
-      <dd>Yes, but not in the load-balancer sense. A WebSocket is one TCP connection, so it is stuck to one server by nature; the balancer only picks a server at connect time. What we need is the <em>inverse</em> lookup: when a message arrives for Khanh, which server holds Khanh's three connections? That is the Redis routing table, <code>route:{user}:{device} → server</code>. Sticky by connection, stateless on the API layer, shared routing map for cross-server delivery. The thing we must <em>not</em> do is pin a user to a server across reconnects, because that turns one node's crash into a permanent outage for its users.</dd>
-    </dl>
-    <p class="ruling"><strong>Decided:</strong> wide-column store, partition key (conversation, month bucket), clustering by Snowflake ID descending. The "nobody here has run Cassandra in anger" risk is real and parked under the canonical frame.</p>
-  </article>
-
-  <article class="arg">
-    <h3>3. Heartbeat, disconnect detection, auto-reconnect<span class="status d">decided</span></h3>
-    <p>Three jobs are usually conflated: keep idle sockets alive through NATs and carriers, detect an <em>unclean</em> drop so presence can mark the user offline, and let the client notice a half-open socket. A clean close is detected instantly; the heartbeat exists for the unclean case.</p>
-    <div class="side">
-      <div class="for"><span class="lbl">Decision</span>Server-initiated WebSocket ping frames every 5 s, two misses means dead (about 10 s). Client mirror rule: no ping for 15 s, close and reconnect with jittered backoff from 1 s to a 30 s cap. The <code>hello</code> frame on reconnect carries the device cursor, so the server replays what was missed before live traffic. Outgoing messages are written to a local outbox with a client-generated ID and flushed on reconnect; the server dedups for 24 h.</div>
-      <div class="against"><span class="lbl">The cost, named</span>The 5 s interval exists only because F7 says presence changes must be visible within 10 s. Relaxing F7 to 30 s makes the ping 15 s and cuts fleet heartbeat traffic three times. This is the cheapest lever on the page and should be re-asked before launch.</div>
-    </div>
-    <p>The insight that makes the interval affordable: <strong>heartbeats never write to Redis.</strong> Pongs update a timestamp in the chat server's memory. Presence in Redis is a lease renewed once every 30 s per server in one pipelined batch, so a node with 100 k connections does 3.3 k key writes a second instead of 20 k. A crashed server's leases expire in 60 s; service discovery also watches server liveness and marks that server's users offline faster.</p>
-    <p class="ruling"><strong>Decided.</strong> Why server-initiated protocol pings: browsers cannot send ping frames but answer them for free, pong is handled below application backpressure, and the server owns the clock.</p>
-  </article>
-
-  <article class="arg">
-    <h3>4. History: keep everything, load the newest, page on scroll<span class="status d">decided</span></h3>
-    <p>All messages are kept server-side, forever. Opening a conversation loads the newest 50; scrolling up pages older ones by cursor over plain HTTPS, never over the WebSocket, because history is a cacheable read path with its own scaling and a deep scroll by one user must not compete with live delivery for everyone on that node.</p>
-    <dl>
-      <dt>Partition by (conversation, month)</dt>
-      <dd>A 100-member group doing 10 k messages a day is 300 k rows a month, about 60 MB, well under the 100 MB partition guideline. Without the bucket, a five-year-old group is one multi-GB partition, the classic Cassandra failure.</dd>
-      <dt>Cursor, not offset</dt>
-      <dd><code>?before={message_id}&amp;limit=50</code>. The Snowflake timestamp selects the month bucket, so a cursor needs no lookup. Offsets are O(n) in a wide-column store and break when messages arrive while the user scrolls.</dd>
-      <dt>Two cursors per device per conversation</dt>
-      <dd><code>oldest_loaded</code> moves backwards for scroll-up over HTTPS. <code>last_synced</code> moves forward for new messages over the socket. They never meet.</dd>
-      <dt>Jump to a quoted parent outside the window</dt>
-      <dd>Fetch by key, then page around it. Not a scroll-up loop.</dd>
-    </dl>
-    <p class="ruling"><strong>Decided.</strong> Rejected: load full history on open (p50 impossible), offset paging, history over the socket, device-only history (fails new-device and lost-phone cases).</p>
-  </article>
-
-  <article class="arg">
-    <h3>5. Read receipts per member, unread state, notifications<span class="status d">decided</span></h3>
-    <p>Truc wanted per-member read tracking in groups, unread marking on every new message, and a push notification. Per member is the expensive choice if done naïvely: 100 read events per message in a full group, each fanned out to 150 devices, is 15 000 receipt frames for one message and 100 receipt rows for every message row.</p>
-    <div class="side">
-      <div class="for"><span class="lbl">What makes it affordable</span>Reading is monotonic. A member who read message 700 has read everything before it. So the state is not "who read message N" but "how far has each member read": one <code>last_read_id</code> per member per conversation, updated with <code>max()</code>, which is idempotent and order-independent. A message's status is derived by comparing cursors, never stored. Receipts are coalesced to one per conversation per 2 s and pushed only to members with that conversation on screen.</div>
-      <div class="against"><span class="lbl">What it costs</span>"Who has read" is a partition read plus a compare, not a stored list, so the UI does one small query when the sender opens the receipt sheet. Acceptable: nobody opens that sheet 100 times a second.</div>
-    </div>
-    <p>Unread is derived the same way: <code>last_message_id(conversation) &gt; last_read_id(conversation, user)</code>. One read cursor per <em>user</em>, not per device, is what makes reading on the phone clear the badge on the laptop. Notifications go only to devices without a live socket, carry a hint and never the body, and go to all offline devices of the user so the read-cursor push clears the rest.</p>
-    <p class="ruling"><strong>Decided.</strong> Rejected: receipt row per message per member, pushing receipts to everyone, per-device read cursors, pushing message bodies, a stored unread counter (hot key, drifts on retry).</p>
-  </article>
-
-  <article class="arg">
-    <h3>6. Fan-out and queueing, explained<span class="status d">direction decided; backing open</span></h3>
-    <p>This is the part between "the chat server has stored the message" and "it is on every recipient's screen". Two decisions hide in it.</p>
-    <dl>
-      <dt>Who does the delivery work, and when</dt>
-      <dd><strong>Fan-out on write</strong>: the sender's chat server does all the work at send time, looks up every recipient device, pushes to each one's server. <strong>Fan-out on read</strong>: write once, recipients pull when they look. For groups of 100, on write: 150 pushes is small and recipients expect messages without asking. The flip point is the large-channel follow-up: at 100 k members one send is 150 k pushes, and channels switch to fan-out on read.</dd>
-      <dt>Is there a queue between the store and the screen</dt>
-      <dd>If every message passes through a durable queue before reaching an online recipient, you pay the queue's latency on every delivery; a Kafka p99 alone can be most of the 500 ms budget. The textbook splits the cases: <strong>online recipient, push directly</strong> server to server, no queue in the path; <strong>everything else</strong>, meaning offline, reconnecting, and "did I miss anything", is served by a per-device sync queue drained from the device cursor. The queue is for catch-up, not the hot path.</dd>
-      <dt>What the sync queue actually is</dt>
-      <dd>Not a work queue with consumers. An ordered log per device of message IDs not yet acknowledged, read only by that device, trimmed as its cursor advances.</dd>
-      <dt>Backpressure, the counterpoint still on the board</dt>
-      <dd>Direct push means one slow recipient server in a 100-member group can stall the sender's server. The fix is a bounded per-destination buffer with a drop-to-queue rule: if the recipient server does not take the push within budget, the message stays in that device's sync queue and the device catches up on its own. Backpressure becomes a delay for one recipient, not a stall for the sender.</dd>
-    </dl>
-    <p class="ruling"><strong>Decided</strong> across arguments 6, 8 and 9: direct push plus a per-device sync queue on Redis Streams with a 24-hour window.</p>
-  </article>
-
-  <article class="arg">
-    <h3>7. Chat-server runtime<span class="status d">decided: Node.js for the prototype</span></h3>
-    <p>The first unanswered question after the canonical frame. Before comparing the three, the challenge on the table is whether the decision is load-bearing at all.</p>
-    <div class="side">
-      <div class="against"><span class="lbl">The challenge</span>Every decision so far shows up in an artifact: the store shapes the schema, the transport shapes the heartbeat protocol, the ID shapes the cursor. The runtime shapes none of them; all three candidates hold 100 k sockets per node. So: <strong>what will be different in this repository depending on the runtime?</strong> If the answer is "a line in design.md", the verdict is "revisit when there is code" and the hour goes to presence fan-out instead.</div>
-      <div class="for"><span class="lbl">When it would matter</span>If the exercise ends in a prototype chat server to test the heartbeat design, the runtime matters a lot, and the argument becomes "which runtime teaches the most per week of practice", not "which is best for WhatsApp". Then BEAM is the strongest candidate precisely because it is the one nobody would pick at work.</div>
-    </div>
-    <p>Truc answered: there will be a prototype, its job is to prove the heartbeat, reconnect and replay protocol, not connection count, and the shortlist is Kotlin or Node.js with "fastest" as the criterion.</p>
-    <p class="ruling"><strong>Decided: Node.js with TypeScript and <code>ws</code> for the prototype.</strong> Protocol-level ping/pong is exposed directly, one file runs in minutes, and the load-balancer repo already uses the same tooling. Kotlin costs half a day of framework setup before the first line of protocol logic. Accepted risks: nothing transfers to the Kotlin stack, and a single-threaded Node process says nothing about connections per node; if that question becomes real, it gets its own prototype. The production runtime is a separate decision. ADR: <code>.memory/decisions/2026-11-01-prototype-runtime-nodejs.md</code>.</p>
-  </article>
-
-  <article class="arg">
-    <h3>8. Does the sync queue need to exist?<span class="status d">decided: keep it</span></h3>
-    <p>Asked as "Cassandra, Redis Streams, or Kafka for the sync queue", answered with a prior question.</p>
-    <div class="side">
-      <div class="against"><span class="lbl">The challenge</span>After arguments 4 and 5 we already have: the message store ordered by ID per conversation, <code>conv:{id}:last</code> in Redis, and a cursor per device per conversation. "What did this device miss" can be answered by listing the user's conversations, comparing each one's last ID to the device cursor, and paging the store forward for the ones that are behind. The sync queue is a second write of every message times 150 devices in a full group, roughly 300 billion appends a day, into a structure that exists only to be trimmed. <strong>What does it give a reconnecting device that "compare cursors, then page the store" does not?</strong></div>
-      <div class="for"><span class="lbl">The one defence so far</span>A user in 500 conversations makes the comparison itself expensive on every reconnect, and mobile reconnects are constant. If that is the case being protected, the argument is about the threshold where a queue beats a scan, not about which product backs the queue.</div>
-    </div>
-    <p>Truc's answer settled it from the product side: on reconnect the chat list must show <em>which conversations have new messages</em> immediately, and open chats must then be complete. Those are two different reads. "Compare cursors, then page the store" is the right answer for the first one and the wrong answer for the second: rebuilding a week of messages across 200 conversations is 200 range scans stitched into one ordered stream on the client, which is exactly what the queue already is.</p>
-    <p class="ruling"><strong>Decided: keep the per-device sync queue</strong> (IDs only, ~50 bytes a row, 30-day TTL, replayed from the device cursor), and add a <strong>conversation summary</strong> read over HTTPS that renders the chat list with unread dots and previews before a single queued message has replayed. Sequence and bounds in <a href="design.md">design.md §4</a>. Still open: what backs the queue, once the write volume is estimated.</p>
-  </article>
-
-  <article class="arg">
-    <h3>9. What backs the sync queue, and where do cursors live<span class="status d">decided</span></h3>
-    <p>Asked as "Cassandra, Redis Streams, or Kafka". The opening challenge was that the 30-day window, a placeholder, was deciding the answer: 54 TB of live data forces Cassandra or Kafka to serve the small fraction of reconnects the slow path already handles correctly.</p>
-    <div class="side">
-      <div class="for"><span class="lbl">Truc's answer</span>The fast path serves 24 hours of offline. Longer than that, the device accepts loading from the persistent store. And the follow-up question that mattered: should cursors always live in Redis or Kafka, and what happens when they are lost?</div>
-      <div class="against"><span class="lbl">The constraint that answers it</span>At a 24 h window the live data is ~1.8 TB, which fits a Redis cluster of about ten nodes. Redis Streams gives exactly the three operations the queue needs: <code>XADD</code> on fan-out, <code>XRANGE</code> from the cursor on replay, <code>XTRIM</code> by time. Neither Cassandra's tombstone care nor Kafka's consumer model is needed for a one-day fast path.</div>
-    </div>
-    <dl>
-      <dt>Cursors: owner, durable copy, loss</dt>
-      <dd>The device's sync cursor is owned by the <em>device</em> and sent on every connect; the server never stores it, so there is no second copy to disagree with. The user's read cursor is owned by the server because other people read it; it lives in Cassandra with Redis as a cache. Kafka is not a cursor store at all: its offsets name positions in Kafka, not message IDs in our store.</dd>
-      <dt>The one rule for loss</dt>
-      <dd>Losing a cursor must make the system replay <em>more</em>, never less. Over-replay is harmless because the client dedups by message ID; under-replay loses messages silently. A wiped device is a new device (slow path). A lost Redis cache is one slower round trip to Cassandra. A cursor advances only after the device acks, never when the server has merely sent.</dd>
-      <dt>Write order, so that loss is only ever more reads</dt>
-      <dd>Message store first, sender ack second, queue append third. Nothing is in Redis that is not already in Cassandra, and the stream holds IDs only. Truc's framing is the right one: the queue is not a core feature, so losing it means loading more from persistent storage, never losing a message. The reverse order would make "sent" a lie when Redis dies.</dd>
-      <dt>The failure that must be designed for</dt>
-      <dd>Losing a Redis shard with its replica sends every device on it to the slow path on the next reconnect. The slow path is rate-limited per chat server so that is a latency event, not a message-store outage.</dd>
-    </dl>
-    <p class="ruling"><strong>Decided:</strong> Redis Streams, one stream per device, 24-hour window, IDs only. Device-owned sync cursor, server-owned read cursor in Cassandra with Redis cache. Full tables in <a href="design.md">design.md §4.2, §4.5, §4.7</a>. ADR: <code>.memory/decisions/2026-11-01-sync-queue-redis-streams.md</code>.</p>
-  </article>
-
-  <article class="arg">
-    <h3>10. Presence: how fast, and to whom<span class="status d">decided</span></h3>
-    <p>Opened as "10 seconds or 30 seconds". The first move was a correction: estimation had tied a 500 k/s Redis lease cost to the 10 s target, but detection is local to the chat server (sweeper over an in-memory table) and the lease exists only for a dead server, which service discovery already handles. So the lease can renew every 2 minutes and the 10 s detection costs only ping frames. The real cost of presence is not detection, it is <em>propagation</em>.</p>
-    <div class="side">
-      <div class="against"><span class="lbl">Push to every online contact</span>A user with 200 contacts and 50 online produces 50 pushes per transition, and mobile radios transition constantly. This is the large number, for a contact screen nobody has open.</div>
-      <div class="for"><span class="lbl">Truc's answer: only who is looking</span>Devices subscribe to the users on their screen: the open chat, the visible rows of the list. Leaving the screen unsubscribes. A transition reaches the handful of people watching, not the contact list. And propagation need not be instant: a small delay or a small error is acceptable, as long as it is bounded.</div>
-    </div>
-    <dl>
-      <dt>Numbers instead of "a bit"</dt>
-      <dd>Detected within 10 s. Visible to watchers within 15 s normally, 30 s worst case. A drop-and-reconnect under 5 s is never shown as offline, which is the debounce that stops every tunnel from flapping the dot.</dd>
-      <dt>Mechanics</dt>
-      <dd>Presence state per user in Redis with a 5 min lease. Subscriptions in the watcher's chat server memory. Cross-server fan-out through a pub/sub channel per watched user, which a chat server joins only while it has a watcher. Online is immediate on <code>hello</code>; offline waits out the 5 s window first.</dd>
-    </dl>
-    <p class="ruling"><strong>Decided:</strong> subscription-based delivery, 10 s detection kept, bounded propagation, lease decoupled and made cheap. <a href="design.md">design.md §5</a>; estimation.md corrected. ADR: <code>.memory/decisions/2026-11-01-presence-subscription.md</code>.</p>
-  </article>
-
-  <article class="arg">
-    <h3>11. Media: what "full size" was protecting<span class="status d">decided</span></h3>
-    <p>Media was the largest system on the page by a thousand to one, and that ratio came from one line in the spec: full size, no server-side resizing or transcoding, which forced a 2 MB average. So the opening challenge was to the requirement, not the architecture.</p>
-    <div class="side">
-      <div class="against"><span class="lbl">If "full size" protects fidelity</span>The user wants originals. Server does nothing, but the client may still offer "send original" versus "send fast"; cost falls only as far as users choose.</div>
-      <div class="for"><span class="lbl">Truc's answer: it protects simplicity</span>No media pipeline on the server, because that is a system of its own and not the subject of this design. Originals were a side effect, not a goal. Client-side compression is therefore allowed and becomes the default.</div>
-    </div>
-    <dl>
-      <dt>What changed</dt>
-      <dd>Average media size 500 KB instead of 2 MB. Media is 250× text instead of 1000×; 100 TB a day uploaded, about 500 TB a day downloaded. Estimation corrected.</dd>
-      <dt>The shape that follows</dt>
-      <dd>Bytes go client to object storage directly over a pre-signed URL that carries the 10 MB cap. The message is sent after the upload completes. Regional buckets, because most chats are intra-region. CDN only in front of group media, where a 150-device burst right after send is the cache pattern a CDN exists for; a 1:1 attachment is fetched 1.5 times and a CDN would only add a hop. Authorization at URL-minting time against conversation membership; a 1 h bearer URL is accepted rather than proxying bytes.</dd>
-    </dl>
-    <p class="ruling"><strong>Decided:</strong> server never touches media bytes, client compresses by default, regional buckets, CDN for group media only. <a href="design.md">design.md §6</a>. ADR: <code>.memory/decisions/2026-11-01-media-no-server-processing.md</code>.</p>
-  </article>
-
+  <div class="cols">
+    <figure data-chart='{"unit":"per second at peak, fleet-wide","rows":[["Messages stored",115000],["Pushes to online devices",700000],["Sync-queue appends",700000],["Receipt writes (coalesced)",175000],["Presence lease renewals",125000]]}'>
+      <figcaption><b>Where the write load is.</b> Delivery and the sync queue run six times hotter than the message store, on tiny rows.</figcaption>
+    </figure>
+    <figure data-chart='{"unit":"TB written per day","log":true,"rows":[["Message text + metadata",0.4],["Sync queue (IDs only)",0.6],["Receipts and cursors",0.1],["Media, client-compressed",100],["Media if originals by default",400]]}'>
+      <figcaption><b>Where the bytes are.</b> Log scale. Media is the system; one spec clarification cut it four times.</figcaption>
+    </figure>
   </div>
 </section>
 
-<section id="asks">
+<!-- ===================== COMPONENTS ===================== -->
+<section id="components">
   <div class="intro">
-    <h2>Questions to settle before the first diagram</h2>
-    <p>Answer these in order. Each one closes at least one "open" layer above.</p>
+    <h2>Components</h2>
+    <p>One section per part of the system, in the order a message travels. The table is the index: what each component decided, and whether anything in it is still open.</p>
+  </div>
+  <table class="index">
+    <thead><tr><th>Component</th><th>Decision</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td><a href="#c-transport">Transport, heartbeat, reconnect</a></td><td>WebSocket; server pings every 5 s, dead after two misses; client reconnects with jittered backoff and resumes from its cursor</td><td><span class="state decided">decided</span></td></tr>
+      <tr><td><a href="#c-store">Message store, IDs, history</a></td><td>Wide-column, partition (conversation, month), Snowflake IDs; keep forever, load newest 50, page by cursor over HTTPS</td><td><span class="state decided">decided</span></td></tr>
+      <tr><td><a href="#c-fanout">Fan-out and queueing</a></td><td>Fan-out on write; direct push to online devices; per-device sync queue on Redis Streams, 24 h window; store-ack-queue write order</td><td><span class="state decided">decided</span></td></tr>
+      <tr><td><a href="#c-reconnect">Reconnect, sync queue, cursors</a></td><td>Chat list from a summary read first, then replay from the device cursor; device owns its sync cursor, server owns read cursors</td><td><span class="state decided">decided</span></td></tr>
+      <tr><td><a href="#c-receipts">Receipts, unread, notifications</a></td><td>One read cursor per member per conversation; unread derived; push hint only, to devices without a socket</td><td><span class="state decided">decided</span></td></tr>
+      <tr><td><a href="#c-presence">Presence</a></td><td>Detect locally in 10 s; deliver by subscription to who is looking; bounded propagation; cheap lease</td><td><span class="state decided">decided</span></td></tr>
+      <tr><td><a href="#c-media">Media</a></td><td>Server never touches bytes; client compresses; regional buckets; CDN for group media only</td><td><span class="state decided">decided</span></td></tr>
+      <tr><td><a href="#c-runtime">Runtime and prototype</a></td><td>Node.js + TypeScript for the prototype; production runtime deliberately undecided</td><td><span class="state open">prototype decided, production open</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ---------- TRANSPORT ---------- -->
+<article class="topic" id="c-transport">
+  <header>
+    <div><p class="kicker">Component 1</p><h2>Transport, heartbeat, reconnect</h2></div>
+    <p class="sum">How 15 million devices hold a connection, how the server notices one has silently died, and how a device gets back without losing or duplicating anything.</p>
+  </header>
+  <div class="cols">
+    <div>
+      <h4>The problem</h4>
+      <p>Three jobs hide in "keep-alive": keep idle sockets open through NATs and carriers; detect an <em>unclean</em> drop so presence can mark the user offline; let the client notice a half-open socket. A clean close is seen instantly by both sides. The heartbeat exists only for the unclean case, and the F7 target of 10 seconds sets its interval.</p>
+      <h4>Decision</h4>
+      <div class="decision">
+        <p><strong>WebSocket</strong> for the real-time path; HTTPS for login, history paging and media.</p>
+        <p><strong>Server-initiated ping frames every 5 s</strong>; two missed pongs mark the connection dead (≈ 10 s). Client mirror rule: no ping for 15 s, close and reconnect.</p>
+        <p><strong>Reconnect</strong> with backoff 1 s → 30 s cap, ±30 % jitter; the <code>hello</code> frame carries the device cursor so the server replays what was missed before live traffic. Outgoing messages sit in a local outbox with a client-generated ID; the server dedups for 24 h.</p>
+        <p><strong>Heartbeats never write to Redis.</strong> Pongs update a timestamp in memory; a sweeper closes stale sockets every second.</p>
+      </div>
+    </div>
+    <div>
+      <h4>Detection timeline</h4>
+      <div class="diagram">
+        <svg viewBox="0 0 520 160" role="img" aria-label="Timeline: pings every 5 seconds; after an unclean drop at t=0 the server misses pongs at 5 and 10 seconds and declares the socket dead at 10; the client, seeing no ping for 15 seconds, reconnects at 15">
+          <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--ink-3)"/></marker></defs>
+          <line x1="30" y1="60" x2="500" y2="60" stroke="var(--line)" stroke-width="1.5"/>
+          <g font-size="11" fill="var(--ink-2)">
+            <text x="30" y="84" text-anchor="middle">−10 s</text><text x="120" y="84" text-anchor="middle">−5 s</text><text x="210" y="84" text-anchor="middle">0</text><text x="300" y="84" text-anchor="middle">5 s</text><text x="390" y="84" text-anchor="middle">10 s</text><text x="480" y="84" text-anchor="middle">15 s</text>
+          </g>
+          <g fill="var(--c1)"><circle cx="30" cy="60" r="5"/><circle cx="120" cy="60" r="5"/></g>
+          <g fill="none" stroke="var(--c3)" stroke-width="2"><circle cx="300" cy="60" r="5"/><circle cx="390" cy="60" r="5"/></g>
+          <g fill="var(--c2)"><circle cx="480" cy="60" r="5"/></g>
+          <line x1="210" y1="38" x2="210" y2="82" stroke="var(--c3)" stroke-width="2"/>
+          <g font-size="11.5" fill="var(--ink)">
+            <text x="30" y="40" text-anchor="middle">ping · pong</text>
+            <text x="120" y="40" text-anchor="middle">ping · pong</text>
+            <text x="210" y="30" text-anchor="middle" font-weight="600">radio drops</text>
+            <text x="300" y="40" text-anchor="middle">miss 1</text>
+            <text x="390" y="40" text-anchor="middle">miss 2</text>
+            <text x="480" y="40" text-anchor="middle">reconnect</text>
+          </g>
+          <g font-size="11.5" fill="var(--ink-2)">
+            <circle cx="36" cy="116" r="4" fill="none" stroke="var(--c3)" stroke-width="2"/><text x="48" y="120"><tspan fill="var(--ink)" font-weight="500">10 s, server:</tspan> socket dead, route removed, presence → pending-offline</text>
+            <circle cx="36" cy="140" r="4" fill="var(--c2)"/><text x="48" y="144"><tspan fill="var(--ink)" font-weight="500">15 s, client:</tspan> no ping seen, close, backoff + jitter, hello{cursor}</text>
+          </g>
+        </svg>
+        <p class="cap">The interval is set by F7's 10 s target: detection = interval × misses. Each halving of the interval doubles ping frames, which is cheap; what would not be cheap is a Redis write per pong, which is why there is none.</p>
+      </div>
+      <table class="plain">
+        <thead><tr><th>Ping</th><th>Detection</th><th>Frames/s per 100 k-socket server</th></tr></thead>
+        <tbody><tr><td>30 s</td><td>60 s</td><td>3.3 k</td></tr><tr><td>15 s</td><td>30 s</td><td>6.7 k</td></tr><tr><td><strong>5 s</strong></td><td><strong>10 s</strong></td><td><strong>20 k</strong></td></tr><tr><td>3 s</td><td>6 s</td><td>33 k</td></tr></tbody>
+      </table>
+    </div>
+    <div class="wide">
+      <h4>Rejected</h4>
+      <table class="plain rej"><tbody>
+        <tr><td>Client-sent JSON ping</td><td>Code on every platform; competes with application backpressure; browsers already answer protocol pings for free.</td></tr>
+        <tr><td>TCP keepalive only</td><td>Kernel default is 2 h; invisible to the app on most mobile stacks; does nothing for the client-side half-open case.</td></tr>
+        <tr><td>Presence key refreshed per pong</td><td>2 M Redis writes/s fleet-wide to answer a question the chat server already knows locally.</td></tr>
+        <tr><td>Long polling, SSE, MQTT</td><td>Request per message, one-directional, or a heavier client story on web. MQTT's "you'll rebuild half of it" point was accepted: the half is ping/pong, a cursor and a dedup key, about 200 lines per platform.</td></tr>
+      </tbody></table>
+      <details class="argued"><summary>How we argued it</summary><div class="body">
+        <p>The canonical-design frame closed WebSocket immediately. Truc then asked for the heartbeat to be designed so it keeps the connection, reconnects, and knows which one is disconnected. The one real trade named: the 5 s interval exists only because F7 says 10 s; relaxing F7 would cut ping traffic three times. That turned out not to matter once the presence component showed detection is local and ping frames are the only cost.</p>
+        <div class="side"><div class="against"><span class="lbl">Challenge</span>WebSocket gives nothing for free: no delivery guarantee, no resumption. Why not start from MQTT?</div><div class="for"><span class="lbl">Answer</span>True, and the design is that missing half, explicitly. The ubiquity of WebSocket on web, and zero client code for protocol pings, outweigh it.</div></div>
+        <p>Full write-up: <a href="design.md">design.md §1</a>.</p>
+      </div></details>
+    </div>
+  </div>
+</article>
+
+<!-- ---------- STORE ---------- -->
+<article class="topic" id="c-store">
+  <header>
+    <div><p class="kicker">Component 2</p><h2>Message store, IDs, history</h2></div>
+    <p class="sum">Where two billion messages a day go, how each one gets an ID that sorts and pages, and how a device shows the newest 50 and scrolls back through years without ever loading it all.</p>
+  </header>
+  <div class="cols">
+    <div>
+      <h4>The problem</h4>
+      <p>Append-heavy, read-recent, almost never update, 115 k writes/s at peak and 730 TB over five years. A store with a single writer is the ceiling; a partition that grows forever is the classic failure. And a cursor for paging must be unambiguous while new messages arrive.</p>
+      <h4>Decision</h4>
+      <div class="decision">
+        <p><strong>Wide-column store</strong> (Cassandra or ScyllaDB), partition key <code>(conversation_id, month bucket)</code>, clustering by <code>message_id</code> descending.</p>
+        <p><strong>Snowflake IDs</strong> minted on the chat server: time plus node plus sequence in 64 bits, so the ID is both the sort key and the pagination cursor, and its timestamp selects the month bucket without a lookup.</p>
+        <p><strong>History is kept forever</strong> server-side. Opening a conversation loads the newest 50; scrolling up pages older ones with <code>?before={message_id}</code> over HTTPS, never over the socket.</p>
+      </div>
+      <h4>Rejected</h4>
+      <table class="plain rej"><tbody>
+        <tr><td>Postgres, sharded</td><td>Reads are fine; the write path funnels through one primary per shard and 730 TB of growth is manual sharding work. Parked under the canonical frame, with "nobody here has run Cassandra in anger" noted as the real risk.</td></tr>
+        <tr><td>Sort by <code>created_at</code></td><td>Same-millisecond collisions need a tiebreaker anyway, and a timestamp is an ambiguous cursor. Kept as a display column.</td></tr>
+        <tr><td>One partition per conversation</td><td>Unbounded growth: a five-year-old group becomes one multi-GB partition.</td></tr>
+        <tr><td>Offset paging, full history on open, history over the socket, device-only history</td><td>O(n) and unstable; p50 impossible; competes with live delivery; fails new-device and lost-phone cases.</td></tr>
+      </tbody></table>
+    </div>
+    <div>
+      <h4>Layout and the two cursors</h4>
+      <div class="diagram">
+        <svg viewBox="0 0 520 236" role="img" aria-label="A conversation is split into month partitions; the newest partition is read first; the oldest-loaded cursor pages backwards over HTTPS while the last-synced cursor moves forward over the WebSocket">
+          <g font-size="11" fill="var(--ink-2)"><text x="12" y="20">conversation 7f3a…, one partition per month</text></g>
+          <g>
+            <rect x="12" y="32" width="96" height="56" rx="8" class="d-box"/><text x="60" y="55" text-anchor="middle" class="d-t">2026-08</text><text x="60" y="72" text-anchor="middle" class="d-s">cold tier</text>
+            <rect x="120" y="32" width="96" height="56" rx="8" class="d-box"/><text x="168" y="55" text-anchor="middle" class="d-t">2026-09</text><text x="168" y="72" text-anchor="middle" class="d-s">41 k rows</text>
+            <rect x="228" y="32" width="96" height="56" rx="8" class="d-box"/><text x="276" y="55" text-anchor="middle" class="d-t">2026-10</text><text x="276" y="72" text-anchor="middle" class="d-s">58 k rows</text>
+            <rect x="336" y="32" width="96" height="56" rx="8" class="d-box store"/><text x="384" y="55" text-anchor="middle" class="d-t">2026-11</text><text x="384" y="72" text-anchor="middle" class="d-s">newest first</text>
+            <rect x="444" y="32" width="64" height="56" rx="8" class="d-box hot"/><text x="476" y="55" text-anchor="middle" class="d-t">live</text><text x="476" y="72" text-anchor="middle" class="d-s">socket</text>
+          </g>
+          <path d="M384 100 V128 H180 V116" class="d-e cold"/><text x="282" y="144" text-anchor="middle" class="d-l">oldest_loaded ← scroll up, HTTPS ?before=id, 50 at a time</text>
+          <path d="M476 100 V170 H400 V116" class="d-e hot"/><text x="470" y="186" text-anchor="end" class="d-l">last_synced → new messages, pushed over the socket</text>
+          <g font-size="11" fill="var(--ink-2)"><text x="12" y="212">A busy 100-member group fills ≈ 60 MB per month, under the 100 MB guideline.</text><text x="12" y="226">The two cursors never meet.</text></g>
+        </svg>
+      </div>
+      <h4>The five questions on Cassandra versus Postgres</h4>
+      <table class="plain">
+        <tbody>
+          <tr><td>Fast write and read?</td><td>Commit log plus memtable, no B-tree, no primary: writes scale with nodes. Reads of "newest 50" are fast on both; the write path and the growth differ.</td></tr>
+          <tr><td>Transactions?</td><td>One row per insert. Fan-out is deliberately not atomic; it is retried idempotently because the ID is fixed. Cross-row ACID is given up because nothing needs it.</td></tr>
+          <tr><td>CAP and ACID?</td><td>AP with quorum writes at RF 3: a partition degrades to "delayed", never "cannot send". Duplicates are the price, handled by the client message ID. Atomicity and durability per row; isolation within a partition.</td></tr>
+          <tr><td>Why not <code>created_at</code>?</td><td>Needs a tiebreaker anyway; ambiguous as a cursor. Snowflake is timestamp plus tiebreaker in one integer. Clock skew is accepted: a quoted reply carries its parent ID explicitly.</td></tr>
+          <tr><td>Sticky sessions?</td><td>Sticky by connection, by nature of TCP. What is needed is the inverse lookup, user → server, in Redis. Never pin a user to a server across reconnects.</td></tr>
+        </tbody>
+      </table>
+      <details class="argued"><summary>How we argued it</summary><div class="body">
+        <p>Truc asked the five questions above after the canonical frame put Cassandra on the board; the answers are the real argument. The storage-bound finding from estimation (2.2 PB on disk needs ~550 nodes for disk, ~15 for throughput) moved compression and tiering from optional to required. "Keep history forever" and "load newest, page on scroll" were product answers that fixed the partition and cursor design. Full write-up: <a href="design.md">design.md §2</a>.</p>
+      </div></details>
+    </div>
+  </div>
+</article>
+
+<!-- ---------- FAN-OUT ---------- -->
+<article class="topic" id="c-fanout">
+  <header>
+    <div><p class="kicker">Component 3</p><h2>Fan-out and queueing</h2></div>
+    <p class="sum">Everything between "the chat server has stored the message" and "it is on every recipient's screen". Two decisions hide here: who does the delivery work and when, and whether a queue sits between the store and the screen.</p>
+  </header>
+  <div class="cols">
+    <div>
+      <h4>The problem</h4>
+      <p>A message to a 100-member group is 150 deliveries across up to 150 different chat servers. The average is far smaller, about 6, but the design must survive both. If every delivery passes through a durable queue, the queue's latency is paid on every message; if none does, an offline or slow recipient has nowhere to wait.</p>
+      <h4>Decision</h4>
+      <div class="decision">
+        <p><strong>Fan-out on write.</strong> The sender's chat server does the work at send time: store, ack, then look up each recipient device's server and push.</p>
+        <p><strong>Direct push for online recipients</strong>, server to server, no queue in the hot path.</p>
+        <p><strong>A per-device sync queue for everything else</strong>: offline devices, reconnecting devices, and "did I miss anything". Backed by <strong>Redis Streams</strong>, one stream per device, IDs only, <strong>24-hour window</strong>.</p>
+        <p><strong>Write order is an invariant: message store, then sender ack, then queue append.</strong> Nothing is ever in Redis that is not already in Cassandra, so losing Redis loses no message, only the map of what each device still lacks.</p>
+        <p><strong>Backpressure:</strong> a bounded per-destination buffer; if a recipient server does not take the push within budget, the message stays in that device's stream and the device catches up on its own. A slow recipient is a delay for one recipient, not a stall for the sender.</p>
+      </div>
+    </div>
+    <div>
+      <figure data-chart='{"unit":"device deliveries per message","rows":[["1:1 chat",2],["Group of 8 (typical)",11],["Average across traffic",6],["Group of 100 (worst case)",150]]}'>
+        <figcaption><b>What one send costs.</b> Each recipient has 1.5 devices and the sender's other devices get a copy. Fan-out on write is sized by the average; backpressure by the worst case.</figcaption>
+      </figure>
+      <figure data-chart='{"unit":"TB of live queue data, RF 3","rows":[["24 h window (chosen)",1.8],["3 days",5],["7 days",13],["30 days",54]]}'>
+        <figcaption><b>The window decides the backing.</b> At 24 h the queue fits a ten-node Redis cluster. At 30 days only Cassandra or Kafka could hold it.</figcaption>
+      </figure>
+    </div>
+    <div class="wide">
+      <h4>Hot path and catch-up path</h4>
+      <div class="diagram">
+        <svg viewBox="0 0 980 250" role="img" aria-label="Hot path: sender's chat server writes the message store, acks the sender, appends to each recipient device's stream, looks up routes in Redis and pushes directly to online devices' chat servers. Catch-up path: an offline or slow device later replays its stream from its cursor; beyond 24 hours it loads from the store.">
+          <rect x="10" y="90" width="130" height="56" rx="10" class="d-box"/><text x="75" y="113" text-anchor="middle" class="d-t">Sender's device</text><text x="75" y="130" text-anchor="middle" class="d-s">outbox, client_msg_id</text>
+          <rect x="190" y="90" width="150" height="56" rx="10" class="d-box hot"/><text x="265" y="113" text-anchor="middle" class="d-t">Sender's chat server</text><text x="265" y="130" text-anchor="middle" class="d-s">fan-out on write</text>
+          <rect x="400" y="14" width="150" height="56" rx="10" class="d-box store"/><text x="475" y="37" text-anchor="middle" class="d-t">1 · Message store</text><text x="475" y="54" text-anchor="middle" class="d-s">write, then ack sender</text>
+          <rect x="400" y="90" width="150" height="56" rx="10" class="d-box"/><text x="475" y="113" text-anchor="middle" class="d-t">2 · Redis routes</text><text x="475" y="130" text-anchor="middle" class="d-s">device → server</text>
+          <rect x="400" y="166" width="150" height="56" rx="10" class="d-box cold"/><text x="475" y="189" text-anchor="middle" class="d-t">3 · Sync streams</text><text x="475" y="206" text-anchor="middle" class="d-s">one per device, 24 h</text>
+          <rect x="640" y="52" width="150" height="56" rx="10" class="d-box hot"/><text x="715" y="75" text-anchor="middle" class="d-t">Recipient's server</text><text x="715" y="92" text-anchor="middle" class="d-s">bounded buffer per dest</text>
+          <rect x="840" y="52" width="130" height="56" rx="10" class="d-box"/><text x="905" y="75" text-anchor="middle" class="d-t">Online device</text><text x="905" y="92" text-anchor="middle" class="d-s">ack → cursor</text>
+          <rect x="840" y="166" width="130" height="56" rx="10" class="d-box"/><text x="905" y="189" text-anchor="middle" class="d-t">Offline device</text><text x="905" y="206" text-anchor="middle" class="d-s">replays on return</text>
+          <path d="M140 118 H188" class="d-e hot"/><text x="164" y="110" text-anchor="middle" class="d-l">WS send</text>
+          <path d="M340 104 H370 V42 H398" class="d-e hot"/>
+          <path d="M340 118 H398" class="d-e hot"/>
+          <path d="M340 132 H370 V194 H398" class="d-e cold"/>
+          <path d="M550 118 H600 V80 H638" class="d-e hot"/><text x="594" y="70" text-anchor="middle" class="d-l">push, direct</text>
+          <path d="M790 80 H838" class="d-e hot"/>
+          <path d="M550 194 H838" class="d-e cold"/><text x="694" y="186" text-anchor="middle" class="d-l">XRANGE from cursor, later</text>
+          <path d="M715 110 V194" class="d-e cold"/><text x="760" y="150" class="d-l">timeout → stays</text><text x="760" y="163" class="d-l">in the stream</text>
+        </svg>
+        <p class="cap">Solid teal is the hot path, paid on every message inside the server-to-server latency budget. Dashed amber is the catch-up path, paid only by devices that were not there.</p>
+      </div>
+      <h4>What the sync queue is, exactly</h4>
+      <p>Not a work queue with competing consumers, and not a shared event stream. One append-only log per device of message IDs that device has not acknowledged, read by that device only. Three operations and nothing else: <code>XADD</code> on fan-out, <code>XRANGE</code> from the cursor on replay, <code>XTRIM</code> by time. Entries are ~50 bytes; bodies are joined from the message store on replay. Acking advances the device's cursor; nothing is deleted on ack.</p>
+      <h4>Rejected</h4>
+      <table class="plain rej"><tbody>
+        <tr><td>Kafka in the hot path</td><td>Its p99 alone can eat most of the 500 ms budget for a recipient who is online and could have been pushed to directly.</td></tr>
+        <tr><td>Cassandra table with TTL as the queue</td><td>12 billion expiring rows a day is the tombstone failure mode; survivable only with daily partitions dropped whole, a lot of care for a one-day fast path.</td></tr>
+        <tr><td>Kafka, partition per user, as the queue</td><td>Write rate is trivial for it, but 15 million per-device consumers at arbitrary offsets is not its model, and it cannot hold our cursors.</td></tr>
+        <tr><td>30-day window</td><td>54 TB live to serve the small fraction of reconnects that the slow path already handles correctly.</td></tr>
+        <tr><td>Queue rows with bodies; one queue per user; delete on ack</td><td>40× the bytes and stale on edit; cannot express "phone behind, laptop current"; tombstones where the cursor already hides acked rows.</td></tr>
+        <tr><td>Fan-out on read</td><td>Right for 100 k-member channels, the follow-up product; wrong for groups of 100 where recipients expect delivery without asking.</td></tr>
+      </tbody></table>
+      <details class="argued"><summary>How we argued it</summary><div class="body">
+        <p>The canonical frame moved the lean from "Kafka-backed sync queue in the delivery path" to the textbook split: direct push for online, queue for catch-up. The remaining counterpoint, a slow recipient server stalling the sender, was answered with the bounded buffer and drop-to-stream rule.</p>
+        <div class="side"><div class="against"><span class="lbl">Challenge: does the queue need to exist?</span>After the store and cursor decisions, "what did this device miss" could be answered by comparing each conversation's newest ID with the device cursor and paging the store forward. The queue is a second write of every message per device, 12 billion appends a day, to save that comparison.</div><div class="for"><span class="lbl">Truc's answer: keep it, and here is why</span>On reconnect the chat list must show which conversations have new messages immediately, and open chats must then be complete. Those are two reads. Compare-and-page is right for the list and wrong for ordered replay across 200 conversations, which is exactly what the queue already is.</div></div>
+        <div class="side"><div class="against"><span class="lbl">Challenge: the 30-day window was deciding the backing</span>54 TB forces Cassandra or Kafka. What is the longest offline gap the fast path must serve?</div><div class="for"><span class="lbl">Truc's answer: 24 hours</span>Beyond that, loading from persistent storage is accepted. At 1.8 TB live, Redis Streams fits and maps one-to-one onto the queue's three operations. And since the queue is not a core feature, losing Redis means loading more, never losing a message, which the write-order invariant guarantees.</div></div>
+        <p>Full write-up: <a href="design.md">design.md §4</a>. ADR: <code>.memory/decisions/2026-11-01-sync-queue-redis-streams.md</code>.</p>
+      </div></details>
+    </div>
+  </div>
+</article>
+
+<!-- ---------- RECONNECT ---------- -->
+<article class="topic" id="c-reconnect">
+  <header>
+    <div><p class="kicker">Component 4</p><h2>Reconnect, sync queue, cursors</h2></div>
+    <p class="sum">What a device does in the first two seconds after it gets its network back, and who owns the three numbers that make "no gap, no duplicates" true.</p>
+  </header>
+  <div class="cols">
+    <div>
+      <h4>The problem</h4>
+      <p>A reconnecting device needs two different things, and no single structure serves both: the chat list, with unread dots and previews, right now; and every missed message, in order, so each open chat is complete. The first is a small bounded read; the second may be thousands of messages.</p>
+      <h4>Decision</h4>
+      <div class="decision">
+        <p><strong>Chat list first, over HTTPS.</strong> One call returns a summary row per conversation that changed since the device's list cursor: last message ID, preview, sender, and an unread count derived by comparing the user's read cursor. Served from a per-conversation summary kept in Redis for conversations active in the last 30 days, from the store for the rest.</p>
+        <p><strong>Then the socket and the replay.</strong> <code>hello{cursor}</code>; the chat server replays the device's stream from there in batches of 100, before live traffic. If the user opens a chat before its replay arrives, the client pages that conversation from the store and the replay dedups by ID.</p>
+        <p><strong>Beyond 24 h</strong> the stream is trimmed past the cursor: summary first, then each chat loads from the store on open. Nothing is lost; the device pays latency.</p>
+      </div>
+      <h4>Cursors: owner, durable copy, loss</h4>
+      <table class="plain">
+        <thead><tr><th>Cursor</th><th>Owner</th><th>Durable copy</th><th>If lost</th></tr></thead>
+        <tbody>
+          <tr><td><code>last_synced_message_id</code> per device</td><td>the device, sent in <code>hello</code></td><td>none needed</td><td>wiped device → new device → slow path. The server never stores it, so there is no second copy to disagree.</td></tr>
+          <tr><td><code>last_read_id</code> per user per conversation</td><td>the server, because others read it</td><td>Cassandra; Redis cache</td><td>cache lost → one slower read; row lost → shows unread, one tap rewrites it. Annoying, not wrong.</td></tr>
+          <tr><td><code>list_cursor</code> per device</td><td>the device</td><td>none</td><td><code>since=0</code> → full list, paged. Slow, not wrong.</td></tr>
+        </tbody>
+      </table>
+      <p>The one rule: <strong>losing a cursor must make the system replay more, never less.</strong> Over-replay is harmless because the client dedups by message ID. A cursor advances only after the device acks, never when the server has merely sent. Kafka is not a cursor store: its offsets name positions in Kafka, not message IDs in our store.</p>
+    </div>
+    <div>
+      <h4>Reconnect sequence</h4>
+<pre><code>device                   API servers        chat server        Redis / store
+  │── GET /conversations?since ──▶│
+  │◀── summaries: dots, previews ─│
+  │   render list  (usable here)
+  │── WS connect + hello{cursor} ─────────────▶│
+  │                                             │── route register ──▶ Redis
+  │                                             │── XRANGE from cursor ──▶ stream
+  │                                             │── join bodies ───────▶ store
+  │◀── missed messages, in order, ×100 ────────│
+  │── ack per batch (advance cursor) ──────────▶│
+  │◀── live traffic begins ────────────────────│</code></pre>
+      <figure data-chart='{"unit":"reads per reconnect, device in 200 conversations","rows":[["Summary read (chat list)",1],["Stream replay (ordered)",1],["Compare-and-page, no queue",200]]}'>
+        <figcaption><b>Why the queue survived.</b> Without it, ordered replay across many conversations is one range scan per conversation, stitched on the client.</figcaption>
+      </figure>
+      <details class="argued"><summary>How we argued it</summary><div class="body">
+        <p>Truc's requirement that the chat list must know which conversations have new messages on reconnect produced the two-read split; the summary read is the part of "compare cursors, then page" that was right. The cursor questions ("should cursors live in Redis or Kafka, and what if they are lost?") produced the ownership table and the replay-more-never-less rule. Full write-up: <a href="design.md">design.md §4.3, §4.4, §4.7</a>.</p>
+      </div></details>
+    </div>
+  </div>
+</article>
+
+<!-- ---------- RECEIPTS ---------- -->
+<article class="topic" id="c-receipts">
+  <header>
+    <div><p class="kicker">Component 5</p><h2>Receipts, unread, notifications</h2></div>
+    <p class="sum">Sent, delivered, read per member in a 100-person group; a conversation marked unread on every device until opened on one; and a push that wakes a phone without leaking the message.</p>
+  </header>
+  <div class="cols">
+    <div>
+      <h4>The problem</h4>
+      <p>Per-member read tracking is the expensive choice if done naïvely: 100 read events per message in a full group, each fanned out to 150 devices, is 15 000 receipt frames for one message and 100 receipt rows for every message row.</p>
+      <h4>Decision</h4>
+      <div class="decision">
+        <p><strong>Reading is monotonic</strong>, so the state is not "who read message N" but "how far has each member read": one <code>last_read_id</code> per member per conversation, updated with <code>max()</code>, idempotent and order-independent.</p>
+        <p><strong>Status is derived, never stored.</strong> Read if every other member's cursor is ≥ the ID; delivered if every device cursor is; else sent.</p>
+        <p><strong>Receipts coalesced</strong> to one per conversation per 2 s, pushed only to members with that conversation on screen.</p>
+        <p><strong>Unread is derived</strong>: newest message ID in the conversation &gt; the user's read cursor. One cursor per user, not per device, so reading on the phone clears the laptop's badge.</p>
+        <p><strong>Notifications</strong> go only to devices without a live socket, to all of them, carrying a hint and never the body. Mute and do-not-disturb are checked first.</p>
+      </div>
+      <h4>Rejected</h4>
+      <table class="plain rej"><tbody>
+        <tr><td>Receipt row per message per member</td><td>100× the message write volume in groups; unbounded partition per message.</td></tr>
+        <tr><td>Push every receipt to every member</td><td>15 000 frames per message; nobody looks at receipts for chats they are not in.</td></tr>
+        <tr><td>Per-device read cursor</td><td>Read on the phone, still unread on the laptop; breaks F6.</td></tr>
+        <tr><td>Push with message body</td><td>Body leaves our boundary; stale on delete or edit.</td></tr>
+        <tr><td>Stored unread counter</td><td>Hot key per user under fan-out; drifts from the cursor on any retry.</td></tr>
+      </tbody></table>
+    </div>
+    <div>
+      <figure data-chart='{"unit":"receipt frames pushed per message, 100-member group","log":true,"rows":[["Per-message receipts, pushed to all",15000],["Per-message receipt rows stored",100],["Cursor approach, writes",50],["Cursor approach, pushes to watchers",8]]}'>
+        <figcaption><b>Per-member receipts, two ways.</b> Log scale. The cursor approach assumes half the members read within the coalescing window and a handful have the chat on screen.</figcaption>
+      </figure>
+      <h4>Storage</h4>
+<pre><code>read_cursors (
+  conversation_id uuid, user_id uuid,
+  last_read_id bigint,          -- only ever increases
+  PRIMARY KEY ((conversation_id), user_id)
+)
+-- "who has read message N" = one partition read, compare last_read_id >= N
+-- unread(conv, user)       = conv.last_message_id > read_cursors[conv,user]</code></pre>
+      <details class="argued"><summary>How we argued it</summary><div class="body">
+        <p>Truc chose per-member tracking and notify-and-mark-unread as requirements. The pushback was the 15 000-frames number; the answer was the monotonic cursor, which keeps the requirement and removes the cost. Full write-up: <a href="design.md">design.md §3</a>.</p>
+      </div></details>
+    </div>
+  </div>
+</article>
+
+<!-- ---------- PRESENCE ---------- -->
+<article class="topic" id="c-presence">
+  <header>
+    <div><p class="kicker">Component 6</p><h2>Presence</h2></div>
+    <p class="sum">Online, offline, last seen: how fast a change is detected, who gets told, and why the number that made it look expensive was a coupling mistake.</p>
+  </header>
+  <div class="cols">
+    <div>
+      <h4>The problem</h4>
+      <p>Detection looked expensive because an early estimate tied a Redis lease, renewed every 30 s for 15 million sockets, to the 10 s target: 500 k writes/s. But detection is local to the chat server, and the lease exists only for a dead server, which service discovery already handles. The real cost of presence is <em>propagation</em>: a user with 200 contacts and 50 online produces 50 pushes per transition, and mobile radios transition constantly.</p>
+      <h4>Decision</h4>
+      <div class="decision">
+        <p><strong>Subscription model.</strong> A device receives presence only for users on its screen: the open chat, the visible rows of the list. Leaving the screen unsubscribes.</p>
+        <p><strong>Detected within 10 s; visible to watchers within 15 s normally, 30 s worst case.</strong> A drop-and-reconnect under 5 s is never shown as offline.</p>
+        <p><strong>Lease decoupled from detection:</strong> renewed every 2 min with a 5 min TTL, a safety net behind service discovery's mark-all-offline on node loss.</p>
+        <p><strong>Cross-server fan-out</strong> through a pub/sub channel per watched user, joined only by servers that currently have a watcher.</p>
+      </div>
+      <h4>Rejected</h4>
+      <table class="plain rej"><tbody>
+        <tr><td>Push every transition to all online contacts</td><td>The large number, for a contact screen the product does not have.</td></tr>
+        <tr><td>Pull on open only</td><td>The dot never changes while a chat is open.</td></tr>
+        <tr><td>Relax F7 to 30 s</td><td>Would have saved nothing once the lease was decoupled; the heartbeat was never the cost.</td></tr>
+        <tr><td>No debounce</td><td>Every tunnel flaps the dot for all watchers and doubles pub/sub traffic.</td></tr>
+      </tbody></table>
+    </div>
+    <div>
+      <h4>State machine per user</h4>
+      <div class="diagram">
+        <svg viewBox="0 0 520 184" role="img" aria-label="States: offline, online, pending-offline. Connect on any device moves offline to online. All devices dead moves online to pending-offline. A reconnect within 5 seconds returns to online with no event. The 5 second timer expiring moves to offline and publishes last seen.">
+          <rect x="20" y="60" width="120" height="48" rx="24" class="d-box"/><text x="80" y="89" text-anchor="middle" class="d-t">offline</text>
+          <rect x="200" y="60" width="120" height="48" rx="24" class="d-box hot"/><text x="260" y="89" text-anchor="middle" class="d-t">online</text>
+          <rect x="380" y="60" width="130" height="48" rx="24" class="d-box cold"/><text x="445" y="83" text-anchor="middle" class="d-t">pending-offline</text><text x="445" y="98" text-anchor="middle" class="d-s">5 s timer</text>
+          <path d="M140 76 H198" class="d-e hot"/><text x="169" y="52" text-anchor="middle" class="d-l">connect, any device</text>
+          <path d="M320 76 H378" class="d-e"/><text x="349" y="52" text-anchor="middle" class="d-l">last device dead</text>
+          <path d="M400 108 V134 H280 V110" class="d-e hot"/><text x="340" y="148" text-anchor="middle" class="d-l">reconnect within 5 s: no event</text>
+          <path d="M470 108 V160 H80 V110" class="d-e cold"/><text x="275" y="178" text-anchor="middle" class="d-l">timer fires: offline, last_seen, publish to watchers</text>
+        </svg>
+      </div>
+      <figure data-chart='{"unit":"per second, fleet-wide","log":true,"rows":[["Lease coupled to detection (early draft)",500000],["Lease decoupled, 2 min renew",125000],["Ping frames, per server",20000]]}'>
+        <figcaption><b>What 10-second detection actually costs.</b> Log scale. The lease was the number; it was never tied to the target.</figcaption>
+      </figure>
+      <figure data-chart='{"unit":"pushes per presence transition","rows":[["Push to all online contacts",50],["Subscription: who is looking",3]]}'>
+        <figcaption><b>Propagation, two ways.</b> A typical user is watched by the few people who have a chat with them open.</figcaption>
+      </figure>
+      <details class="argued"><summary>How we argued it</summary><div class="body">
+        <p>Opened as "10 seconds or 30 seconds?". The first move was the correction above. Truc then answered the propagation question: only who is looking, and propagation need not be instant as long as the error is bounded. The bounds became numbers. Full write-up: <a href="design.md">design.md §5</a>. ADR: <code>.memory/decisions/2026-11-01-presence-subscription.md</code>.</p>
+      </div></details>
+    </div>
+  </div>
+</article>
+
+<!-- ---------- MEDIA ---------- -->
+<article class="topic" id="c-media">
+  <header>
+    <div><p class="kicker">Component 7</p><h2>Media</h2></div>
+    <p class="sum">The largest system on the page by two orders of magnitude, and the one where a single clarification of the requirement did more than any architecture choice.</p>
+  </header>
+  <div class="cols">
+    <div>
+      <h4>The problem</h4>
+      <p>At a 2 MB average, 10 % of two billion messages is 400 TB a day, a thousand times the text, with download bandwidth around 23 GB/s. That average came from one line in the spec: full size, no server-side resizing or transcoding.</p>
+      <h4>Decision</h4>
+      <div class="decision">
+        <p><strong>"Full size" protects simplicity, not fidelity.</strong> There is no server-side media pipeline because that is a system of its own. The server never touches media bytes.</p>
+        <p><strong>Compression is the client's job.</strong> Images compressed on the device by default (≤ 500 KB); the sender may choose "send original". The 10 MB cap is enforced by the pre-signed upload URL's content-length condition.</p>
+        <p><strong>Bytes go client ↔ object storage directly.</strong> The message is sent only after the upload completes and references the object key.</p>
+        <p><strong>Regional buckets; CDN only in front of group media.</strong> A 1:1 attachment is fetched 1.5 times, where a CDN adds a hop; a group attachment is fetched up to 150 times in a burst, the pattern a CDN exists for.</p>
+        <p><strong>Authorization at URL-minting time</strong> against conversation membership; download URLs are 1 h bearer tokens.</p>
+      </div>
+      <h4>Rejected</h4>
+      <table class="plain rej"><tbody>
+        <tr><td>Originals by default</td><td>Four times the dominant cost for fidelity nobody asked for in a chat.</td></tr>
+        <tr><td>Upload through the API servers</td><td>Every byte crosses our fleet twice to enforce a cap the signed URL already enforces.</td></tr>
+        <tr><td>Server-side thumbnails or transcoding</td><td>A pipeline of its own; out of scope by F9. Clients render their own thumbnails.</td></tr>
+        <tr><td>CDN for everything; proxy downloads for authorization; global bucket</td><td>A hop and a miss on every 1:1 download; bytes back through our servers; cross-region writes for intra-region chats.</td></tr>
+      </tbody></table>
+    </div>
+    <div>
+      <figure data-chart='{"unit":"TB per day","log":true,"rows":[["Text + metadata",0.4],["Media, originals by default",400],["Media, client-compressed",100]]}'>
+        <figcaption><b>One clarification, four times less.</b> Log scale. Media remains 250× text; the 10 % media rate is the next lever.</figcaption>
+      </figure>
+      <h4>Upload</h4>
+<pre><code>client                      API server                 object storage
+  │── POST /media/intent ─────▶│ validate size ≤ 10 MB
+  │   {size, mime, sha256}     │ mint pre-signed PUT (10 min,
+  │◀── {media_key, put_url} ───│   content-length = size)
+  │── PUT bytes ───────────────────────────────────────────▶│
+  │◀── 200 ────────────────────────────────────────────────│
+  │── WS send {body, media_key, size, mime, sha256}</code></pre>
+      <details class="argued"><summary>How we argued it</summary><div class="body">
+        <div class="side"><div class="against"><span class="lbl">Challenge</span>What is "full size" protecting: quality (the user wants originals) or simplicity (no pipeline on the server)? Only the second reading permits client compression.</div><div class="for"><span class="lbl">Truc's answer</span>Simplicity; media processing is not the subject of this design. Originals were a side effect, not a goal.</div></div>
+        <p>Full write-up: <a href="design.md">design.md §6</a>. ADR: <code>.memory/decisions/2026-11-01-media-no-server-processing.md</code>.</p>
+      </div></details>
+    </div>
+  </div>
+</article>
+
+<!-- ---------- RUNTIME ---------- -->
+<article class="topic" id="c-runtime">
+  <header>
+    <div><p class="kicker">Component 8</p><h2>Runtime and prototype</h2></div>
+    <p class="sum">What the chat servers run on, and why that question was only worth answering once we knew a prototype would exist.</p>
+  </header>
+  <div class="cols">
+    <div>
+      <h4>The problem</h4>
+      <p>Every other decision shows up in an artifact: the store shapes the schema, the transport shapes the heartbeat, the ID shapes the cursor. The runtime shapes none of those; Kotlin on Netty, Elixir and Go all hold 100 k sockets per node. So the first question was whether the decision was load-bearing at all.</p>
+      <h4>Decision</h4>
+      <div class="decision">
+        <p><strong>There will be a prototype</strong>, and its job is to prove the heartbeat, reconnect and replay protocol, not connection count.</p>
+        <p><strong>Node.js with TypeScript and <code>ws</code></strong> for the prototype, because that is the fastest path: protocol-level ping/pong exposed directly, one file runs in minutes, and the load-balancer repo already uses the same tooling.</p>
+      </div>
+      <div class="decision open">
+        <p><strong>Production runtime: deliberately undecided.</strong> Kotlin on Netty remains the default for real work. BEAM is the language this problem was shaped by, and a Node prototype teaches nothing about connections per node; both true, both outside the prototype's stated goal. If that question becomes real, it gets its own prototype.</p>
+      </div>
+    </div>
+    <div>
+      <h4>What the prototype must prove</h4>
+      <ol class="asks">
+        <li>An unclean drop is detected within 10 s, with the scripted client suppressing pongs and dropping sockets uncleanly.</li>
+        <li>Reconnect with a cursor replays exactly the missed messages, in order, with no duplicates.</li>
+        <li>A duplicate send is deduplicated by client message ID.</li>
+        <li>The chat list renders from the summary before the replay finishes.</li>
+      </ol>
+      <details class="argued"><summary>How we argued it</summary><div class="body">
+        <p>Challenge: what will be different in this repository depending on the runtime? Truc: there will be a prototype; its goal is protocol correctness; the shortlist is Kotlin or Node.js; the criterion is speed. Node.js followed. ADR: <code>.memory/decisions/2026-11-01-prototype-runtime-nodejs.md</code>.</p>
+      </div></details>
+    </div>
+  </div>
+</article>
+
+<!-- ===================== FOLLOW-UPS ===================== -->
+<section id="followups">
+  <div class="intro">
+    <h2>Still open, and follow-ups</h2>
+    <p>Nothing here blocks the prototype. Each is a task of its own, with the component it would change.</p>
   </div>
   <ol class="asks">
-    <li><s>Is this exercise optimising for learning the canonical design or for what we would actually run?</s> <strong>Answered: the textbook design</strong> (Alex Xu, ch. 12). That answer decided four layers above: WebSocket, the wide-column store, Snowflake IDs, and direct push with a sync queue. It did not decide the programming language, because the book never names one. So "Kotlin or Elixir for the chat servers" is still an open question.</li>
-    <li><s>Where is latency measured?</s> <strong>Answered: server to server</strong>, chat-server ingress to recipient-socket write. The whole 500 ms p99 is spent inside our infrastructure, so a durable hop in the delivery path is affordable on latency grounds. Direct push stays because it is simpler, not because the budget forbids a queue.</li>
-    <li><s>What is the group-size roadmap?</s> <strong>Answered: 100 is the product now.</strong> Communities of 10 k+ are a Discord-style forum, a different product shape with its own design pass (spec §8.3). Fan-out on write is sized to 100 with no hidden threshold.</li>
-    <li><s>Is 10 seconds for presence a product promise or a placeholder?</s> <strong>Answered: keep 10 s detection,</strong> deliver by subscription only to who is looking, accept bounded propagation delay (15 s normal, 30 s worst) and a 5 s debounce. The lease cost that made 10 s look expensive was a coupling error, now removed (argument 10).</li>
-    <li><s>Do read receipts in groups need per-member tracking, or is "read by N" enough?</s> <strong>Answered: per member.</strong> Made affordable by storing one read cursor per member per conversation instead of a receipt per message, and by coalescing receipt pushes (design.md §3).</li>
-    <li><s>Does the server keep history forever, or is it a relay with device-side storage?</s> <strong>Answered: forever, server-side.</strong> The month-bucketed partitions in design.md §2 already assume this; retention becomes a tiering question only.</li>
-    <li><s>For media: regional buckets or global CDN?</s> <strong>Answered: both, split by conversation type.</strong> Regional buckets for everything; CDN only for group media. And "full size" was clarified to mean "server never processes bytes", so clients compress by default (argument 11).</li>
-    <li><s>Is the exercise going to produce a prototype chat server, or only the design?</s> <strong>Answered: a prototype, in Node.js + TypeScript,</strong> to prove the heartbeat, reconnect and replay protocol (argument 7).</li>
-    <li><s>Does a reconnecting device need a sync queue, or is "compare cursors, then page the store" enough?</s> <strong>Answered: keep the queue</strong> for ordered replay, plus a conversation summary read for the chat list (argument 8). Backing decided in argument 9: Redis Streams, 24 h window.</li>
+    <li><strong>Production runtime.</strong> Component 8. Re-decide when there is a product; a second prototype in Kotlin or BEAM is the honest way to compare connection handling.</li>
+    <li><strong>Service discovery.</strong> Components 1 and 6 depend on it (least-loaded server, mark-all-offline on node loss). The book says ZooKeeper; today that reads as etcd, Consul, or the orchestrator.</li>
+    <li><strong>The 10 % media rate.</strong> Component 7. The remaining lever on the dominant cost; halving it halves media.</li>
+    <li><strong>Discord-style communities.</strong> Groups of 10 k+ change fan-out (on read), presence (a member list is a "who is online" screen), and the message store partitioning. A separate design pass, spec §8.3.</li>
+    <li><strong>The prototype plan</strong> in <code>.planning/plans/</code>, and <code>docs/tradeoffs.md</code> in the spec's chosen / rejected / why format, mostly extractable from the "Rejected" tables above.</li>
   </ol>
 </section>
 
 <footer>Repository: <a href="https://github.com/spartan-trucle/vntech-chat-system">spartan-trucle/vntech-chat-system</a>. Companion to the <a href="https://github.com/spartan-trucle/vntech-load-balancer">load balancer</a> and <a href="https://github.com/spartan-trucle/vntech-auth">auth</a> talks.</footer>
 </div>
+
 <script>
 (function(){
+  /* theme */
   var root=document.documentElement,btn=document.getElementById('theme');
   function cur(){var t=root.getAttribute('data-theme');if(t)return t;return matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}
   function apply(t){root.setAttribute('data-theme',t);btn.textContent=t==='dark'?'Light':'Dark';try{localStorage.setItem('theme',t)}catch(e){}}
   try{var s=localStorage.getItem('theme');if(s)apply(s);else btn.textContent=cur()==='dark'?'Light':'Dark'}catch(e){}
   btn.addEventListener('click',function(){apply(cur()==='dark'?'light':'dark')});
+
+  /* bar charts from data: one series, teal; horizontal; optional log axis; hover tooltip; table view */
+  var tip=document.getElementById('tip');
+  function fmt(v){
+    if(v>=1e6)return (v/1e6).toLocaleString(undefined,{maximumFractionDigits:1})+' M';
+    if(v>=1e3)return (v/1e3).toLocaleString(undefined,{maximumFractionDigits:0})+' k';
+    return v.toLocaleString(undefined,{maximumFractionDigits:1});
+  }
+  function logTicks(min,max){var t=[],p=Math.floor(Math.log10(min));for(;Math.pow(10,p)<=max*1.01;p++)t.push(Math.pow(10,p));return t}
+  function niceTicks(max){var step=Math.pow(10,Math.floor(Math.log10(max)));var n=max/step;if(n<2)step/=5;else if(n<5)step/=2;var t=[];for(var v=0;v<=max*1.0001;v+=step)t.push(+v.toPrecision(10));return t}
+  document.querySelectorAll('figure[data-chart]').forEach(function(fig){
+    var cfg=JSON.parse(fig.getAttribute('data-chart')),rows=cfg.rows,log=!!cfg.log;
+    var maxLen=Math.max.apply(null,rows.map(function(r){return r[0].length}));var labelW=Math.min(300,Math.max(170,Math.round(maxLen*6.4)+14));var W=560,padR=56,top=6,rowH=30,H=top+rows.length*rowH+44;
+    var x0=labelW,x1=W-padR,plotW=x1-x0;
+    var vals=rows.map(function(r){return r[1]}),max=Math.max.apply(null,vals),min=Math.min.apply(null,vals);
+    var lo=log?Math.pow(10,Math.floor(Math.log10(min))):0;
+    var scale=log?function(v){return x0+plotW*(Math.log10(v)-Math.log10(lo))/(Math.log10(max)-Math.log10(lo)+0.0001)}:function(v){return x0+plotW*v/max};
+    var ticks=log?logTicks(lo,max):niceTicks(max);
+    var ns='http://www.w3.org/2000/svg';
+    var svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 '+W+' '+H);svg.setAttribute('role','img');
+    svg.setAttribute('aria-label',cfg.unit+': '+rows.map(function(r){return r[0]+' '+r[1]}).join('; '));
+    var g=function(tag,attrs,txt){var e=document.createElementNS(ns,tag);for(var k in attrs)e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;svg.appendChild(e);return e};
+    ticks.forEach(function(t){if(log&&t<lo)return;var x=log?scale(t):scale(t);if(x<x0-1||x>x1+1)return;
+      g('line',{x1:x,x2:x,y1:top,y2:top+rows.length*rowH,stroke:'var(--grid)','stroke-width':1});
+      g('text',{x:x,y:H-24,'text-anchor':'middle','font-size':10,fill:'var(--ink-3)'},fmt(t));});
+    rows.forEach(function(r,i){var y=top+i*rowH+5,h=18,x=scale(r[1]),w=Math.max(2,x-x0);
+      g('text',{x:x0-10,y:y+13,'text-anchor':'end','font-size':11.5,fill:'var(--ink-2)'},r[0]);
+      var bar=g('path',{d:'M'+x0+' '+y+' H'+(x0+w-4)+' a4 4 0 0 1 4 4 v'+(h-8)+' a4 4 0 0 1 -4 4 H'+x0+' z',fill:'var(--c1)'});
+      g('text',{x:x0+w+8,y:y+13,'font-size':11.5,fill:'var(--ink)','font-weight':500},fmt(r[1]));
+      var hit=g('rect',{x:0,y:y-6,width:W,height:rowH,fill:'transparent'});
+      hit.addEventListener('mousemove',function(ev){tip.textContent=r[0]+': '+r[1].toLocaleString()+' '+cfg.unit;tip.style.left=(ev.clientX+12)+'px';tip.style.top=(ev.clientY+12)+'px';tip.style.opacity=1;bar.style.opacity=.75});
+      hit.addEventListener('mouseleave',function(){tip.style.opacity=0;bar.style.opacity=1});
+    });
+    g('line',{x1:x0,x2:x0,y1:top,y2:top+rows.length*rowH,stroke:'var(--line)','stroke-width':1});
+    g('text',{x:x1,y:H-6,'text-anchor':'end','font-size':10,fill:'var(--ink-3)'},(log?'log scale · ':'')+cfg.unit);
+    fig.insertBefore(svg,fig.querySelector('figcaption').nextSibling);
+    var det=document.createElement('details');det.className='tbl';det.innerHTML='<summary>Table</summary><table><thead><tr><th>Item</th><th>'+cfg.unit+'</th></tr></thead><tbody>'+rows.map(function(r){return '<tr><td>'+r[0]+'</td><td>'+r[1].toLocaleString()+'</td></tr>'}).join('')+'</tbody></table>';
+    fig.appendChild(det);
+  });
 })();
 </script>
 </body>
