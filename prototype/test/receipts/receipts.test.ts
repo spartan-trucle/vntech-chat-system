@@ -167,6 +167,33 @@ describe('B5 receipts: read cursors, multi-device read state, open set (design �
     expect(receipts(laptop).map((f) => f.last_read_id)).toEqual([k2]);
     void srv;
   });
+
+  test('the trace reads like docs/prototype/index.html: cursor write, badge clear, cursors to the open chat', async () => {
+    const srv = await start();
+    const phone = await connect(DEVICES.trucPhone);
+    const laptop = await connect(DEVICES.trucLaptop);
+    const khanh = await connect(DEVICES.khanhPhone);
+    const t0 = await post(phone, 'c1', 't0', [khanh, laptop]);
+    khanh.send({ t: 'receipt', conversation_id: 'c1', last_read_id: t0 }); // Khanh has c1 open
+    await settle();
+    srv.ctx.trace.clear();
+
+    const id = await post(khanh, 'c1', 'k1', [phone, laptop]);
+    await settle();
+    phone.send({ t: 'receipt', conversation_id: 'c1', last_read_id: id });
+    await laptop.expect('receipt');
+    await khanh.expect('receipt');
+
+    // The harness logs its own client-side rows under the frame type (`Truc·phone → …`, `← Truc·laptop: …`); keep the server's.
+    const serverRows = traceRows(['receipt', 'push', 'apns']).filter((r) => !/^\w+ (←|\S+·\S+ →)/.test(r));
+    expect(serverRows).toEqual([
+      `push #${id} → Truc·phone, Truc·laptop over the socket`,
+      `receipt delivery_cursors[c1] ← #${id} for Khanh·phone (sender), Truc·phone (over the socket), Truc·laptop (over the socket)`,
+      `receipt read_cursors[c1][truc] = max(prev,#${id})`,
+      'push read_cursor → Truc·laptop (clears their badge)',
+      'receipt cursors c1 → Khanh·phone (devices with the chat open)',
+    ]);
+  });
 });
 
 describe('B5 fan-out hooks: delivery cursors and push hints without the body (design §3.3, §3.6)', () => {
