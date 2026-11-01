@@ -39,12 +39,13 @@ describe('B3 sync queue and replay (design §4.2, §4.4, §4.7; scenario S2)', (
   const queueRows = (): string[] => server!.ctx.trace.rows().filter((r) => r.tag === 'queue').map((r) => r.text);
   const settle = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
   const phaseOf = (device_id: string): string | undefined => server!.ctx.connections.byDevice(device_id)?.phase;
-  /** Connects, receives one live message from `from`, acks it by hand: the device now owns a cursor. */
+  /** Connects, receives one live message from `from` and acks it (by hand unless `autoAck` is on): the device now owns a cursor. */
   const prime = async (device: FixtureDevice, from: ScriptedClient, opts: Partial<ScriptedClientOptions> = {}): Promise<{ client: ScriptedClient; primed: MessageId }> => {
     const client = await connect(device, { autoAck: false, ...opts });
     const primed = await sendMsg(from, 'c1', 'prime');
     await client.expect((f) => f.t === 'deliver' && f.message.message_id === primed);
-    client.ack(streamIdOf(primed));
+    if (opts.autoAck) await until(() => client.cursor === streamIdOf(primed), 2000, 'auto-ack of the primed message');
+    else client.ack(streamIdOf(primed));
     return { client, primed };
   };
   /** Clean close and wait until the server has dropped the connection. */
@@ -236,7 +237,11 @@ describe('B3 sync queue and replay (design §4.2, §4.4, §4.7; scenario S2)', (
       const m5 = await sendMsg(khanh, 'c1', 'five, live');
       await phone.expect((f) => f.t === 'deliver' && f.message.message_id === m5);
       expect(fanout[1]).toEqual({ message_id: m5, pushed: ['A1'] });
-      expect(queueRows().filter((r) => r.startsWith('XRANGE'))).toHaveLength(3);
+      // Two batches: [m1, m2], then [m3, m4] because m4 was already in the stream when the second XRANGE ran.
+      expect(queueRows().filter((r) => r.startsWith('XRANGE'))).toEqual([
+        `XRANGE sq:A1 (${streamIdOf(primed)} + → 2 entries, join bodies from the store`,
+        `XRANGE sq:A1 (${streamIdOf(m2)} + → 2 entries, join bodies from the store`,
+      ]);
     });
 
     test('no ack within ackTimeoutMs: the replay stops with a lost row, the connection goes live, the device keeps its cursor and replays again next time', async () => {
