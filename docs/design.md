@@ -127,14 +127,15 @@ A sweeper runs every 1 s over the local table and closes any connection with
 
 **Heartbeat traffic never writes to Redis.** Pongs update `last_pong_at` in memory only.
 Presence in Redis is a *lease*: the chat server renews every one of its users' keys with a
-60 s TTL once every 30 s, in one pipelined batch per server (100 k keys per batch, every
-30 s, ≈ 3.3 k key writes/s per server). Compare: writing on every pong would be 20 k/s
-per server, 2 M/s fleet-wide, for nothing.
+5 min TTL once every 2 min, in one pipelined batch per server (≈ 0.8 k key writes/s per
+server, §5.5). Compare: writing on every pong would be 20 k/s per server, 2 M/s
+fleet-wide, for nothing.
 
-**Chat-server death** is the case the lease is for. If a node crashes, its users' leases
-expire within 60 s. That is slower than F7, so the service-discovery layer also watches
-chat-server liveness and, on a node loss, runs a `mark-all-offline(server_id)` job that
-walks the node's routing set. Two mechanisms, one fast and one safe.
+**Chat-server death** is the only case the lease is for. If a node crashes, its users'
+leases expire within 5 min, which is far slower than F7, so the service-discovery layer
+watches chat-server liveness and, on a node loss, runs a `mark-all-offline(server_id)`
+job that walks the node's routing set within seconds. The lease is the safety net behind
+that job, not the primary mechanism, which is why it can be slow and cheap (§5.5).
 
 ### 1.6 Rejected alternatives
 
@@ -533,9 +534,100 @@ the server has merely sent it. The ack is the only thing that moves the number.
 
 ---
 
+## 5. Presence: detect locally, deliver only to watchers
+
+### 5.1 Decisions
+
+- **Subscription model.** A device receives presence only for users it is currently
+  looking at: the other party of an open 1:1 chat, the members of an open group that are
+  rendered on screen, and the users whose rows are visible in the chat list. Leaving the
+  screen unsubscribes. There is no "all my contacts, always fresh" feed.
+- **Freshness, stated as numbers** (spec F7): a drop is detected within 10 s (design
+  §1.2); the change reaches watchers within 15 s normally and 30 s worst case; a user
+  who drops and is back within 5 s is never shown as offline.
+- **Detection and the Redis lease are decoupled.** Detection is local to the chat server
+  and costs nothing in Redis. The lease exists only for the case where the chat server
+  itself dies, and is renewed every 2 min with a 5 min TTL.
+
+### 5.2 State machine per user
+
+```
+                  connect (any device)
+   offline ───────────────────────────▶ online
+      ▲                                   │
+      │   last device dead for ≥ 5 s      │  all devices dead (§1.5 sweeper)
+      │   (debounce window)               ▼
+      └──────────────────────────── pending-offline
+                                          │  a device reconnects within 5 s
+                                          └──────────▶ online   (no event emitted)
+```
+
+- `online` is per user, not per device: one live device anywhere means online.
+- `pending-offline` is the debounce. Mobile radios drop and recover in a second or two;
+  without the window every tunnel and lift would flap the dot for all watchers.
+- `last_seen` is written on the transition to offline, from the server's clock.
+
+### 5.3 Where the state lives and who moves it
+
+| Thing | Where | Written by | Read by |
+|-------|-------|-----------|---------|
+| Which devices are connected, and where | Redis routing table `route:{user}:{device}` (§1.5) | chat servers on connect/disconnect | chat servers on delivery |
+| Presence state + `last_seen` | Redis `presence:{user}` with 5 min TTL | the chat server that observed the last transition | the summary read (§4.3) and subscription setup |
+| Subscriptions: who is watching whom | in the watcher's chat server memory: `watching[target_user] → set(conn)` | chat server on `watch`/`unwatch` frames from the client | the fan-out step below |
+| Cross-server fan-out | Redis pub/sub channel `pres:{user}` | the chat server emitting a transition | every chat server with at least one watcher of that user |
+
+A chat server subscribes to `pres:{user}` when its first watcher of that user appears and
+unsubscribes when the last one leaves, so the pub/sub fan-out is only to servers that
+currently care. Within the server the event is pushed to the watching connections.
+
+### 5.4 Flow
+
+```
+A's phone drops (unclean)
+  t+0     A's chat server stops seeing pongs
+  t+10 s  sweeper closes the socket, removes the route, A has no other device
+          → state = pending-offline, timer 5 s
+  t+15 s  timer fires, no reconnect → presence:A = offline, last_seen=t
+          → PUBLISH pres:A {offline, last_seen}
+  t+15 s  B's chat server (B has A's chat open) receives, pushes to B's socket
+          → B sees "last seen just now" at ~t+15 s          (within the 15 s target)
+
+A's phone reconnects at t+12 s instead
+  t+12 s  hello arrives on some chat server, route written, state online again
+          → pending-offline timer cancelled, nothing published; B never saw a flap
+```
+
+Online transitions are immediate: `hello` publishes `online` at once, debounced only in
+the sense that a `pending-offline → online` cancel emits nothing.
+
+### 5.5 Cost, revisited against estimation.md §2
+
+- **Detection:** 20 k ping frames/s per server, in memory. Unchanged.
+- **Lease:** 15 M keys renewed every 2 min instead of 30 s → ~125 k Redis writes/s fleet,
+  down from 500 k. The 10 s target did not move; only the crash-recovery lease did,
+  because service discovery already marks a dead server's users offline faster than any
+  lease can (§1.5).
+- **Fan-out:** bounded by watchers, not contacts. A user is typically watched by the
+  handful of people who have a chat with them open. The worst case is a popular member
+  of many open groups; at 100-member groups that is still at most a few hundred watchers,
+  pushed once through pub/sub and then locally per server.
+- **Subscriptions:** a device watches at most what fits on its screen, roughly 20 to 30
+  users; 15 M devices × 25 = 375 M subscription entries fleet-wide, in chat-server memory,
+  ~40 bytes each → 15 GB across 200 servers. Fine.
+
+### 5.6 Rejected alternatives
+
+| Alternative | Why not |
+|-------------|---------|
+| Push every transition to every online contact | 50 pushes per flap × constant mobile flapping × 10 M online users; the largest hidden cost on the page for a screen nobody has open. |
+| Pull on open, no push at all | The dot never changes while a chat is open; F7 asks for change to be visible. |
+| Presence key refreshed on every pong | 2 M Redis writes/s for a question the chat server already answers locally (§1.5). |
+| No debounce | Every tunnel flaps the dot for all watchers and doubles pub/sub traffic. |
+| 30 s detection to save heartbeat cost | The heartbeat was never the cost; the lease was, and it is now decoupled. |
+
+---
+
 ## Open on the board after this section
 
 - Production runtime — deliberately undecided; the prototype is Node.js (ADR above).
-- Presence fan-out: §1.5 decides how *offline* is detected; it does not decide how 10 M
-  state changes reach friends' screens.
 - Service discovery: §1.4 and §1.5 both depend on it; ZooKeeper vs etcd vs orchestrator.

@@ -70,18 +70,17 @@ bytes on the wire       ≈ 100 B per frame incl. TCP/TLS     → 2 MB/s per ser
 Negligible per node. The cost that would matter is a Redis write per pong, which the
 design forbids.
 
-Presence lease (design §1.5): each server renews its users' keys every 30 s.
+Presence lease (design §1.5, §5.5): each server renews its users' keys every 2 min.
 
 ```
-key writes/s per server = 100 k / 30 s                      ≈ 3.3 k
-key writes/s fleet      = 15 M / 30 s                       = 500 k   (pipelined, in 200 batches)
+key writes/s per server = 100 k / 120 s                     ≈ 0.8 k
+key writes/s fleet      = 15 M / 120 s                      = 125 k   (pipelined, in 200 batches)
 ```
 
-Half a million key writes a second is a real Redis cluster, roughly 5 to 8 nodes for
-this alone. **This is the largest hidden cost on the page**, and it is the reason the
-10-second presence target (F7) is worth re-asking: a 60 s lease renewed every 30 s is
-tied to the 10 s detection window only loosely, so relaxing F7 lets the lease stretch to
-120 s and halves this.
+An earlier draft had this at 500 k/s with a 30 s renewal and called it the reason to
+relax F7. That was wrong: detection is local to the chat server and never touches
+Redis, and a dead server's users are marked offline by service discovery, so the lease
+is only a safety net and can be slow. The 10 s target costs ping frames, nothing more.
 
 Routing table: `route:{user}:{device} → server`
 
@@ -190,7 +189,7 @@ summaries.
 |---------|---------------------|
 | Average deliveries per message is ~6, not 75 | design §4.5 corrected; fan-out on write is comfortably affordable at the average, backpressure is sized by the 150-device worst case |
 | Sync queue writes at 700 k/s peak, 54 TB live, time-bounded | the backing-store argument now has its input; Cassandra-with-TTL is at risk from tombstones |
-| Presence lease is 500 k Redis writes/s fleet-wide | strongest argument yet for relaxing F7 from 10 s to 30 s |
+| Presence lease was 500 k Redis writes/s only because it was coupled to detection | decoupled: lease every 2 min (125 k/s), detection stays local, F7 keeps 10 s; presence delivered by subscription, not to all contacts (design §5) |
 | Message store is storage-bound 30:1 | compression and tiering move from "nice to have" to required |
 | Media is 1000× text and 23 GB/s download average | regional buckets, CDN for group media only; the 2 MB average is the single most expensive assumption in the spec |
 | Conversation summaries do not all fit in Redis | design §4.3: Redis for 30-day-active conversations, store for the rest |
