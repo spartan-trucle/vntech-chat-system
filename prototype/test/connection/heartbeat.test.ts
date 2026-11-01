@@ -55,7 +55,7 @@ describe('connection module: heartbeat, sweeper and death on fake time', () => {
   };
 
   const client = async (dev: FixtureDevice = DEVICES.trucPhone): Promise<ScriptedClient> => {
-    const c = new ScriptedClient(dev, { url: server.url, now: () => time.now() });
+    const c = new ScriptedClient(dev, { url: server.url, now: () => time.now(), timers: time, mirrorRule: false, reconnect: false });
     clients.push(c);
     await c.connect();
     await c.hello();
@@ -68,7 +68,7 @@ describe('connection module: heartbeat, sweeper and death on fake time', () => {
   };
 
   afterEach(async () => {
-    for (const c of clients.splice(0)) c.destroyWithoutClose();
+    for (const c of clients.splice(0)) c.stop();
     await server.close();
   });
 
@@ -133,7 +133,7 @@ describe('connection module: heartbeat, sweeper and death on fake time', () => {
 
   test('a socket that never sent hello is swept too', async () => {
     await start();
-    const c = new ScriptedClient(DEVICES.trucLaptop, { url: server.url, now: () => time.now() });
+    const c = new ScriptedClient(DEVICES.trucLaptop, { url: server.url, now: () => time.now(), timers: time, mirrorRule: false, reconnect: false });
     clients.push(c);
     await c.connect();
     c.suppressPongs();
@@ -161,7 +161,7 @@ describe('connection module: real timers, scaled down', () => {
     const server = await createChatServer({ port: 0, moduleOptions: { connection: { pingMs: 50, deadAfterMs: 100, sweepMs: 10 } } });
     const gone: Gone[] = [];
     server.ctx.events.on('device_disconnected', ({ conn, reason, last_device }) => { gone.push({ device_id: conn.device_id, reason, last_device }); });
-    const c = new ScriptedClient(DEVICES.khanhPhone, { url: server.url });
+    const c = new ScriptedClient(DEVICES.khanhPhone, { url: server.url, mirrorRule: false, reconnect: false });
     try {
       await c.connect();
       await c.hello();
@@ -175,7 +175,7 @@ describe('connection module: real timers, scaled down', () => {
       expect(gone).toEqual([{ device_id: 'B1', reason: 'dead', last_device: true }]);
       expect(server.ctx.trace.rows().some((r) => r.text === 'Khanh·phone missed 2 pings, dead → DEL route:khanh:B1')).toBe(true);
     } finally {
-      c.destroyWithoutClose();
+      c.stop();
       await server.close();
     }
   });
