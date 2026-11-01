@@ -150,4 +150,42 @@ describe('B4 history page API, summary row and slow path (design §2.3, §4.3, �
       expect(srv.ctx.trace.rows().some((r) => r.tag === 'http' && r.text === 'GET /conversations/c1/messages?limit=50 ← Truc·phone (buckets 202703→202602, 14 reads)')).toBe(true);
     });
   });
+
+  describe('GET /conversations/:id/messages/:message_id (design §2.3: jump to a quoted parent, F10)', () => {
+    interface Jump { message: Message; before: Message[]; after: Message[] }
+
+    test('returns the row by key with a window around it: before newest-first, after oldest-first', async () => {
+      const srv = await start();
+      const khanh = await connect(DEVICES.khanhPhone);
+      const ids: MessageId[] = [];
+      for (let i = 1; i <= 7; i += 1) ids.push(await sendMsg(khanh, 'c1', `m${i}`));
+      const anchor = ids[3]!;
+
+      const bare = await get<Jump>(`/conversations/c1/messages/${anchor}?user_id=truc&device_id=A2`);
+      expect(bare.status).toBe(200);
+      expect(bare.body.message).toMatchObject({ message_id: anchor, body: 'm4' });
+      expect(bare.body.before).toEqual([]);
+      expect(bare.body.after).toEqual([]);
+
+      const window = await get<Jump>(`/conversations/c1/messages/${anchor}?user_id=truc&before=2&after=2`);
+      expect(window.body.before.map((m) => m.message_id)).toEqual([ids[2], ids[1]]);
+      expect(window.body.after.map((m) => m.message_id)).toEqual([ids[4], ids[5]]);
+
+      const both = await get<Jump>(`/conversations/c1/messages/${anchor}?user_id=truc&limit=10`);
+      expect(both.body.before.map((m) => m.message_id)).toEqual([ids[2], ids[1], ids[0]]);
+      expect(both.body.after.map((m) => m.message_id)).toEqual([ids[4], ids[5], ids[6]]);
+      expect(srv.ctx.trace.rows().some((r) => r.tag === 'http' && r.text === `GET /conversations/c1/messages/${anchor} ← Truc·laptop`)).toBe(true);
+    });
+
+    test('404 for an id that is not in the conversation, 403 for a non-member, 400 for a malformed id or window', async () => {
+      await start();
+      const khanh = await connect(DEVICES.khanhPhone);
+      const id = await sendMsg(khanh, 'c1', 'only');
+      expect(await get(`/conversations/c1/messages/${BigInt(id) + 1n}?user_id=truc`)).toEqual({ status: 404, body: { error: 'not_found' } });
+      expect(await get(`/conversations/c3/messages/${id}?user_id=truc`)).toEqual({ status: 404, body: { error: 'not_found' } });
+      expect(await get(`/conversations/c1/messages/${id}?user_id=linh`)).toEqual({ status: 403, body: { error: 'not_member' } });
+      expect(await get(`/conversations/c1/messages/abc?user_id=truc`)).toEqual({ status: 400, body: { error: 'bad_cursor' } });
+      expect(await get(`/conversations/c1/messages/${id}?user_id=truc&before=201`)).toEqual({ status: 400, body: { error: 'bad_limit' } });
+    });
+  });
 });
