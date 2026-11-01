@@ -3,6 +3,8 @@
 Design exercise: a real-time chat service (1:1 and group, multi-device, offline delivery)
 at Messenger / WhatsApp scale.
 
+**Read online:** https://spartan-trucle.github.io/vntech-chat-system/ (the `docs/` folder, served by GitHub Pages).
+
 - [`docs/index.html`](docs/index.html) — the discussion page: requirements with their reasoning and
   challenges, scale numbers, and the tech-stack decision board (open / decided per layer).
   Plain HTML, no build step; open the file or serve `docs/` with any static server.
