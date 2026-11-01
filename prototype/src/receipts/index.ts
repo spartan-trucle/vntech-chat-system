@@ -27,6 +27,7 @@ import { USERS, deviceName } from '../fixtures.js';
 import type { Connection, ServerContext } from '../server.js';
 import type { ConversationId, UserId } from '../protocol.js';
 import { InMemoryPushGateway, type PushGateway } from './PushGateway.js';
+import { statusOf } from './status.js';
 
 export { InMemoryPushGateway, type PushGateway, type PushHint, type RecordedPush } from './PushGateway.js';
 export { statusOf, type MessageStatus, type StatusReport } from './status.js';
@@ -157,6 +158,24 @@ export function registerReceipts(ctx: ServerContext): () => void {
       await opts.pushGateway.push(device_id, { conversation_id, message_id, sender_display_name });
       ctx.trace.add('apns', `#${message_id} → ${name}: no route → push hint {conv, id, from}, no body`);
     }
+  });
+
+  // ---- status for the sender (design §3.3): derived, never stored ------------------------
+  // One `readCursors` partition read and one `deliveryCursors` read, whatever the group size;
+  // the member list and the device directory are not the cursor partitions.
+  ctx.http.route('GET', '/conversations/:id/messages/:message_id/status', async (req) => {
+    const user_id = req.query['user_id'];
+    if (!user_id) return { status: 400, body: { error: 'user_id_required' } };
+    const conversation_id = req.params['id'] as ConversationId;
+    const conversation = await ctx.ports.conversations.get(conversation_id);
+    if (!conversation || !conversation.members.includes(user_id)) return { status: 403, body: { error: 'not_member' } };
+    const message = await ctx.ports.messages.get(conversation_id, req.params['message_id'] as string);
+    if (!message) return { status: 404, body: { error: 'not_found' } };
+    const [read, delivery] = await Promise.all([ctx.ports.cursors.readCursors(conversation_id), ctx.ports.cursors.deliveryCursors(conversation_id)]);
+    const devices = (await Promise.all(conversation.members.map((m) => ctx.ports.devices.devicesOf(m)))).flat();
+    const report = statusOf(message, read, delivery, conversation.members, devices);
+    ctx.trace.add('http', `GET status ${conversation_id}/#${message.message_id} for ${user_id} → ${report.status} (1 partition read, ${read.size} cursors)`);
+    return { status: 200, body: report };
   });
 
   return () => {
