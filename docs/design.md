@@ -252,9 +252,118 @@ separately via the object store, §F9).
 
 ---
 
+## 3. Receipts per member, unread state, and notifications
+
+### 3.1 Decisions
+
+- **Read receipts are tracked per member (F8).** The sender of a group message can see
+  which members have read it, not only how many.
+- **Every new message notifies and marks the conversation unread (F4a).** A push goes to
+  the recipient's devices; the conversation shows as unread on every device until it is
+  opened on one of them.
+- **History is kept forever (F5).** The 5-year number is for sizing only.
+
+### 3.2 Why "per member" is a trap if stored per message
+
+A 100-member group, each member reading each message, is 100 read events per message.
+At 150 deliveries per event that is 15 000 pushed receipt frames for one message, a
+hundred times the message traffic itself. Stored per message, a busy group writes 100
+receipt rows for every one message row.
+
+The fix is to notice that reading is monotonic: a member who has read message 700 has
+read everything before it. So the state we need is not "who read message N" but
+**"how far has each member read"**, which is one number per member per conversation.
+
+### 3.3 Storage
+
+```
+read_cursors (
+  conversation_id  uuid,
+  user_id          uuid,
+  last_read_id     bigint,      -- Snowflake; monotonic, only ever increases
+  updated_at       timestamp,
+  PRIMARY KEY ((conversation_id), user_id)
+);
+
+delivery_cursors (
+  conversation_id  uuid,
+  device_id        uuid,
+  last_delivered_id bigint,
+  PRIMARY KEY ((conversation_id), device_id)
+);
+```
+
+- One partition per conversation holds at most 100 rows (members) or 500 rows (devices).
+  Reading "who has read message N" is one partition read and a compare:
+  `last_read_id >= N`.
+- A message's status for the sender is derived, never stored: *read* if every other
+  member's cursor is ≥ its ID, *delivered* if every device cursor is, else *sent*.
+- Writes are idempotent and commutative: `SET last_read_id = max(last_read_id, X)`. A
+  late or duplicate receipt is harmless, which fits the at-least-once delivery path.
+
+### 3.4 Receipt traffic
+
+The client sends a read receipt when a conversation is on screen and the newest visible
+message changes, **coalesced to at most one per conversation per 2 s**. The chat server
+writes the cursor, then publishes `{conversation, user, last_read_id}` to the members
+who currently have that conversation open; members not looking at it get the cursor
+when they next open it, by reading the partition. Nobody is pushed receipts for a chat
+they are not watching.
+
+Delivered receipts follow the same shape, keyed by device, sent by the client when the
+sync queue hands it new messages.
+
+### 3.5 Unread state
+
+Unread is also derived, not stored per message:
+
+```
+unread(conversation, user) = last_message_id(conversation) > last_read_id(conversation, user)
+```
+
+`last_message_id` per conversation is kept in Redis (`conv:{id}:last`) and updated on
+every write; the conversation list for a user is built by reading their read cursors
+and comparing. An unread *count* needs one more number, the count of messages since the
+cursor, which Cassandra answers with a bounded range count on the current bucket; cap the
+displayed value at 99+ so deep backlogs never need a full count.
+
+Opening the conversation on **any one device** advances the user's read cursor; the
+server pushes the new cursor to the user's other devices, which clear their badge. One
+cursor per user, not per device, is what makes multi-device read state consistent (F6).
+
+### 3.6 Notifications
+
+On every stored message, after the fan-out to online devices:
+
+1. Look up the recipient's devices in the routing table. Devices with a live connection
+   got the message over the socket already; **no push for them**.
+2. For every device without a live connection, send a push through APNs/FCM carrying
+   `{conversation_id, message_id, sender_display_name}` and a preview flag. Never the
+   body: it leaves our infrastructure and it would go stale if the message is deleted.
+3. Push to all offline devices of the user, not only one. The OS shows it where the user
+   is; when they open on one device, the read-cursor push in §3.5 clears the others.
+4. Mute and do-not-disturb are checked here, per conversation per user, before step 2.
+
+Badge count in the push is the number of unread conversations, read from Redis, so the
+icon badge and the in-app list agree.
+
+### 3.7 Rejected alternatives
+
+| Alternative | Why not |
+|-------------|---------|
+| One receipt row per message per member | 100× the message write volume in groups and an unbounded partition per message. |
+| Push every receipt to every member | 15 000 frames per message in a full group; nobody looks at receipts for chats they are not in. |
+| Per-device read cursor | A user who read on the phone still sees unread on the laptop; breaks F6. |
+| Push with message body | Body leaves our boundary; deleted or edited messages show stale text on lock screens. |
+| Stored unread counter incremented per message | Hot counter per user under group fan-out, and it drifts from the cursor on any retry. |
+
+---
+
 ## Open on the board after this section
 
 - Runtime (Kotlin/Netty vs BEAM vs Go) — still the first unanswered question.
 - Presence fan-out: §1.5 decides how *offline* is detected; it does not decide how 10 M
   state changes reach friends' screens.
+- Fan-out and sync-queue backing: §3.4 and §3.6 assume the direct-push path; what durable
+  store backs the per-device sync queue is still open.
 - Service discovery: §1.4 and §1.5 both depend on it; ZooKeeper vs etcd vs orchestrator.

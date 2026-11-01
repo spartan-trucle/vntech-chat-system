@@ -26,11 +26,13 @@ extensible to the follow-up questions in §8.
 | F2 | Group chat, up to **100 members** per group |
 | F3 | Real-time delivery with low latency when both parties are online |
 | F4 | Offline delivery: messages sent to an offline user are stored and delivered when they reconnect |
-| F5 | Message persistence and chat history, retrievable on any device |
+| F4a | **Notify and mark unread:** every new message pushes a notification to the recipient's devices (hint only, body fetched on open) and marks that conversation unread for that user until they open it |
+| F5 | Message persistence and chat history, retrievable on any device. **History is kept forever** on the server; retention is a storage-tiering question, not a deletion policy |
 | F6 | Multi-device support: one user may be logged in on several devices at once; all devices see the same conversation state |
 | F7 | **Online indicator (must have):** every conversation and contact list shows whether the other party is online, offline, or last seen at a time. A change in state must be visible to contacts within **10 seconds** |
-| F8 | Message status: sent → delivered → read |
+| F8 | Message status: sent → delivered → read, **tracked per member** in group chats (the sender can see who has read, not only how many) |
 | F9 | **Media messages:** images, video and files up to **10 MB** per attachment, stored and delivered **at full size** (no resizing or transcoding on the server). One attachment per message. Recipients see the message immediately and fetch the media on demand |
+| F11 | **Auto-reconnect:** a client that loses connectivity reconnects on its own as soon as the network is back, without user action, and resumes from where it left off with no gap and no duplicates |
 | F10 | **Reply to a message:** a message can reference one earlier message in the same conversation (quoted reply, WhatsApp style). The client renders the quoted excerpt; if the parent was deleted, the reply still shows with a "message unavailable" placeholder. Slack-style threads remain out of scope |
 
 ### 2.2 Non-functional requirements
@@ -70,7 +72,7 @@ seem off, but state the alternative you are using.
 | Concurrent online users at peak | 10 million |
 | Devices per user | 1.5 average, 5 maximum |
 | Group size | median 5, max 100 |
-| Chat history retention | 5 years |
+| Chat history retention | forever (5-year figure used for sizing) |
 | Messages carrying media | 10 % of messages |
 | Average media size | 2 MB (cap 10 MB) |
 

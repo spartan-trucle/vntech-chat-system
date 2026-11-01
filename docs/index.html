@@ -182,7 +182,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
 
     <div class="req"><div class="id">F3</div><div><h3>Real-time delivery</h3><p>p50 under 100 ms, p99 under 500 ms, both parties online.</p></div><div><span class="lbl">Why</span><p>Sets the protocol: anything with request overhead per message fails the p50.</p></div><div><span class="lbl">Challenge</span><p>Measured from where to where? Device-to-device includes the mobile radio; we can't control that.</p></div></div>
 
-    <div class="req"><div class="id">F4</div><div><h3>Offline delivery</h3><p>Messages to an offline user wait, then arrive on reconnect.</p></div><div><span class="lbl">Why</span><p>Separates "delivered to a server" from "delivered to a person". Introduces the per-user inbox.</p></div><div><span class="lbl">Challenge</span><p>How long do we hold them? A week offline with 100 active groups is a big inbox.</p></div></div>
+    <div class="req"><div class="id">F4</div><div><h3>Offline delivery, notify, mark unread</h3><p>Messages to an offline user wait, then arrive on reconnect. Every new message pushes a notification and marks the conversation unread until opened.</p></div><div><span class="lbl">Why</span><p>Separates "delivered to a server" from "delivered to a person". Introduces the per-user inbox and the per-conversation unread state.</p></div><div><span class="lbl">Challenge</span><p>Five devices online: who gets the push, and does opening on one clear the badge on the others?</p></div></div>
 
     <div class="req"><div class="id">F5</div><div><h3>Persistent history</h3><p>Any device can page back through the conversation.</p></div><div><span class="lbl">Why</span><p>The write-heavy, read-recent access pattern is what picks the database.</p></div><div><span class="lbl">Challenge</span><p>Does history belong on the server at all? WhatsApp historically kept it on the device.</p></div></div>
 
@@ -190,9 +190,11 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
 
     <div class="req"><div class="id">F7</div><div><h3>Online indicator, must have</h3><p>Online, offline, or last seen. Visible to contacts within 10 seconds.</p></div><div><span class="lbl">Why</span><p>Presence is the most expensive cheap-looking feature: 10 M heartbeats on a clock.</p></div><div><span class="lbl">Challenge</span><p>Is 10 s a product number or a guess? Each halving roughly doubles heartbeat load.</p></div></div>
 
-    <div class="req"><div class="id">F8</div><div><h3>Message status</h3><p>Sent, delivered, read.</p></div><div><span class="lbl">Why</span><p>Each transition is an event flowing backwards. Three small messages for every real one.</p></div><div><span class="lbl">Challenge</span><p>In a 100-person group, do we track read per member, or just "read by some"?</p></div></div>
+    <div class="req"><div class="id">F8</div><div><h3>Message status, per member</h3><p>Sent, delivered, read. In groups the sender sees <em>who</em> read, not only how many.</p></div><div><span class="lbl">Why</span><p>Each transition is an event flowing backwards. Per member in a 100-group is 100 read events per message unless they are coalesced.</p></div><div><span class="lbl">Challenge</span><p>Store a receipt per message per member, or one read cursor per member per conversation? Decided: cursor. See design.md §3.</p></div></div>
 
     <div class="req"><div class="id">F9</div><div><h3>Media up to 10 MB, full size</h3><p>Images, video, files. No server-side resizing or transcoding. One per message.</p></div><div><span class="lbl">Why</span><p>Blob bytes dwarf text bytes by orders of magnitude and must never ride the real-time path.</p></div><div><span class="lbl">Challenge</span><p>Full size on mobile data to 100 recipients is up to 1 GB per send. Who pays for that?</p></div></div>
+
+    <div class="req"><div class="id">F11</div><div><h3>Auto-reconnect</h3><p>A client reconnects by itself when the network returns and resumes with no gap and no duplicates.</p></div><div><span class="lbl">Why</span><p>Mobile radios drop constantly. Without this, "real-time" is only true on Wi-Fi.</p></div><div><span class="lbl">Challenge</span><p>Already designed in design.md §1.4: jittered backoff, device cursor, client message ID for dedup. Is there a case it misses?</p></div></div>
 
     <div class="req"><div class="id">F10</div><div><h3>Quoted reply</h3><p>A message references one earlier message in the same conversation. Threads stay out.</p></div><div><span class="lbl">Why</span><p>Cheap to add, but it is the first feature where a message depends on another message.</p></div><div><span class="lbl">Challenge</span><p>Copy the quoted text into the reply, or fetch by ID? Deleted parents decide this.</p></div></div>
   </div>
@@ -342,8 +344,8 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <li>Where is latency measured? If it is server ingress to server egress, Kafka in the hot path is affordable. If it is device to device, it probably is not.</li>
     <li>What is the group-size roadmap? If 100 is forever, fan-out on write is fine. If 10 000 is a follow-up, design the threshold now.</li>
     <li>Is 10 seconds for presence a product promise or a placeholder? Each halving roughly doubles the heartbeat load on Redis.</li>
-    <li>Do read receipts in groups need per-member tracking, or is "read by N" enough? Per-member is 100 status events per message.</li>
-    <li>Does the server keep history forever, or is it a relay with device-side storage? This changes the whole storage section.</li>
+    <li><s>Do read receipts in groups need per-member tracking, or is "read by N" enough?</s> <strong>Answered: per member.</strong> Made affordable by storing one read cursor per member per conversation instead of a receipt per message, and by coalescing receipt pushes (design.md §3).</li>
+    <li><s>Does the server keep history forever, or is it a relay with device-side storage?</s> <strong>Answered: forever, server-side.</strong> The month-bucketed partitions in design.md §2 already assume this; retention becomes a tiering question only.</li>
     <li>For media: regional buckets or global CDN? Full-size delivery without variants makes the CDN case weaker than usual.</li>
   </ol>
 </section>
