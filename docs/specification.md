@@ -28,9 +28,10 @@ extensible to the follow-up questions in §8.
 | F4 | Offline delivery: messages sent to an offline user are stored and delivered when they reconnect |
 | F5 | Message persistence and chat history, retrievable on any device |
 | F6 | Multi-device support: one user may be logged in on several devices at once; all devices see the same conversation state |
-| F7 | Online presence indicator (online / offline / last seen) |
+| F7 | **Online indicator (must have):** every conversation and contact list shows whether the other party is online, offline, or last seen at a time. A change in state must be visible to contacts within **10 seconds** |
 | F8 | Message status: sent → delivered → read |
-| F9 | Text messages only (plain text, emoji); attachments are a follow-up (§8) |
+| F9 | **Media messages:** images, video and files up to **10 MB** per attachment, stored and delivered **at full size** (no resizing or transcoding on the server). One attachment per message. Recipients see the message immediately and fetch the media on demand |
+| F10 | **Reply to a message:** a message can reference one earlier message in the same conversation (quoted reply, WhatsApp style). The client renders the quoted excerpt; if the parent was deleted, the reply still shows with a "message unavailable" placeholder. Slack-style threads remain out of scope |
 
 ### 2.2 Non-functional requirements
 
@@ -70,14 +71,16 @@ seem off, but state the alternative you are using.
 | Devices per user | 1.5 average, 5 maximum |
 | Group size | median 5, max 100 |
 | Chat history retention | 5 years |
+| Messages carrying media | 10 % of messages |
+| Average media size | 2 MB (cap 10 MB) |
 
 Derive, and write down:
 
 - Average and peak **messages per second** (write QPS).
 - Fan-out factor for reads (one message to a 100-person group on 1.5 devices each).
-- **Storage per day and per year** for message text + metadata.
+- **Storage per day and per year** for message text + metadata, and separately for media blobs.
 - **Concurrent connections** the real-time layer must hold at peak.
-- Bandwidth in and out of the real-time layer at peak.
+- Bandwidth in and out of the real-time layer at peak, and the media upload/download bandwidth that must **not** go through it.
 
 ## 4. Actors and core flows
 
@@ -96,6 +99,8 @@ Derive, and write down:
 5. **Presence** — user goes online, goes idle, loses connectivity without logging out. How do friends learn about it, and how fast?
 6. **Message status** — sent / delivered / read. Who records each transition and who is notified?
 7. **Load chat history** — open a conversation and page back through two years of messages.
+8. **Send media to a group** — a 10 MB video to a 100-person group. Upload path, where the bytes live, what the 100 recipients receive first, and when the sender sees "sent".
+9. **Reply to a message** — user replies to a message from last month. Is the quoted excerpt stored with the reply or fetched by ID on render? What happens when the parent is outside the device's local cache?
 
 ## 5. Design decisions the document must make
 
@@ -121,26 +126,35 @@ alternative considered and the reason for rejecting it.
 - Table / key design for 1:1 and group messages. How history for a conversation is paged.
 - Message ID generation: requirements (unique, sortable within a conversation, available at high write rate) and the chosen scheme (global sequence, Snowflake-style, per-conversation sequence, …).
 - Retention and tiering for 5 years of history.
+- Reply reference: how `reply_to` is stored and whether the quoted text is denormalized into the reply or resolved on read.
 
-### 5.4 Message delivery
+### 5.4 Media
+
+- Upload path: through the API servers or direct to object storage with a pre-signed URL? Where is the 10 MB limit enforced, and what does the client see on violation?
+- How a message references its blob (ID, URL, content hash) and whether the message is sent before, after, or in parallel with the upload.
+- Download path and caching (CDN or not) given full-size delivery and no server-side variants; impact on mobile data and on the 100-member fan-out.
+- Authorization on blob access: who can fetch a media URL and for how long.
+- Retention: do blobs follow the 5-year message retention, and what happens to the blob when the message is deleted.
+
+### 5.5 Message delivery
 
 - Fan-out strategy for groups: on write vs. on read, and the threshold where the answer changes.
 - Per-user inbox / message-sync queue: structure and what happens when it fills.
 - Exactly-once vs. at-least-once semantics and how duplicates are handled on the client.
 - Ordering guarantee across devices and across group members.
 
-### 5.5 Offline and multi-device
+### 5.6 Offline and multi-device
 
 - How each device tracks the point up to which it has synced (cursor / `cur_max_message_id`).
 - Push notification path and deduplication when several devices are online.
 - Read-receipt propagation to the sender and to the reader's other devices.
 
-### 5.6 Presence
+### 5.7 Presence
 
-- Heartbeat design: interval, timeout, and the cost at 10 M concurrent users.
+- Heartbeat design: interval, timeout, and the cost at 10 M concurrent users, given the 10-second freshness target in F7.
 - Fan-out of presence changes: push to all friends, or pull on demand? Where does the answer change (small friend list vs. a 100 K-member Discord server)?
 
-### 5.7 Reliability and operations
+### 5.8 Reliability and operations
 
 - Failure of one chat server: what happens to its connections and in-flight messages?
 - Failure of the message store primary.
@@ -172,6 +186,7 @@ Score the finished design against this before considering it done.
 | Estimation | QPS, storage and connection counts are derived, not asserted, and drive at least two design choices |
 | Architecture | A newcomer can trace all seven flows in §4.2 through the diagram without asking a question |
 | Storage | Schema and ID scheme are concrete enough to write the queries for "load last 50 messages" and "sync since cursor" |
+| Media | Upload and download paths bypass the real-time layer; the 10 MB limit and blob authorization are enforced at a named hop |
 | Delivery | At-least-once path and client-side dedup are spelled out; group fan-out has a stated threshold |
 | Trade-offs | Every decision in §5 names a rejected alternative |
 | Failure modes | Single-server loss and store-primary loss both have a recovery story with bounded data loss |
@@ -181,7 +196,7 @@ Score the finished design against this before considering it done.
 
 Pick these up only after the core design passes §7.
 
-1. **Media attachments** — images, video, files. Upload path, CDN, thumbnailing, how a message references a blob.
+1. **Media processing** — thumbnails, image resizing, video transcoding, and multiple attachments per message (the core brief ships full-size, single attachment, no processing).
 2. **End-to-end encryption** — key distribution across multiple devices, group key rotation on membership change.
 3. **Very large groups / channels** — 100 K to 1 M members (Telegram channels, Discord servers). How fan-out and presence change.
 4. **Message search** — full text across a user's history; indexing cost vs. freshness.
