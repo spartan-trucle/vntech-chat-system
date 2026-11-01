@@ -128,7 +128,7 @@ describe('B4 history page API, summary row and slow path (design §2.3, §4.3, �
         ids.push(message_id);
         await srv.ctx.ports.messages.insert({
           conversation_id: 'c1', bucket: bucketOf(message_id), message_id, sender_id: 'khanh', client_msg_id: `old-${i}`,
-          body: `old ${i}`, reply_to: null, media_key: null, media_size: null, media_mime: null, created_at: now,
+          body: `old ${i}`, reply_to: null, media_key: null, media_size: null, media_mime: null, sha256: null, created_at: now,
         });
       }
       expect(bucketOf(ids[0]!)).toBe(202602);
@@ -295,7 +295,7 @@ describe('B4 history page API, summary row and slow path (design §2.3, §4.3, �
         const message_id = srv.ctx.ids.next();
         await srv.ctx.ports.messages.insert({
           conversation_id: 'c1', bucket: bucketOf(message_id), message_id, sender_id: 'khanh', client_msg_id: `bulk-${i}`,
-          body: `bulk ${i}`, reply_to: null, media_key: null, media_size: null, media_mime: null, created_at: srv.ctx.clock.now(),
+          body: `bulk ${i}`, reply_to: null, media_key: null, media_size: null, media_mime: null, sha256: null, created_at: srv.ctx.clock.now(),
         });
         await srv.ctx.events.emit('message_stored', { message: (await srv.ctx.ports.messages.get('c1', message_id))!, sender: srv.ctx.connections.byDevice('B1')! });
       }

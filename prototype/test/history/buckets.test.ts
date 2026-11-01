@@ -16,7 +16,7 @@ async function seed(store: InMemoryMessageStore, months: Array<{ year: number; m
       const message_id = ids.next();
       const row: Message = {
         conversation_id: 'c1', bucket: bucketOf(message_id), message_id, sender_id: 'truc', client_msg_id: message_id,
-        body: `m${out.length}`, reply_to: null, media_key: null, media_size: null, media_mime: null, created_at: t,
+        body: `m${out.length}`, reply_to: null, media_key: null, media_size: null, media_mime: null, sha256: null, created_at: t,
       };
       await store.insert(row);
       out.push(message_id);

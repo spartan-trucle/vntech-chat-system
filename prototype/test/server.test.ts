@@ -188,7 +188,7 @@ describe('chat server core (composition root)', () => {
   });
 
   test('http beside the socket: /health from the core, registered routes with params and query, 404 otherwise', async () => {
-    server.ctx.http.route('GET', '/conversations/:id/messages', async (req) => ({
+    server.ctx.http.route('GET', '/probe/:id/things', async (req) => ({
       status: 200,
       body: { id: req.params['id'], limit: req.query['limit'] ?? null },
     }));
@@ -196,7 +196,7 @@ describe('chat server core (composition root)', () => {
     const health = await fetch(`${server.httpUrl}/health`);
     expect(health.status).toBe(200);
     expect(await health.json()).toMatchObject({ ok: true, server_id: 'srv-1' });
-    const page = await fetch(`${server.httpUrl}/conversations/c1/messages?limit=50`);
+    const page = await fetch(`${server.httpUrl}/probe/c1/things?limit=50`);
     expect(await page.json()).toEqual({ id: 'c1', limit: '50' });
     const echo = await fetch(`${server.httpUrl}/echo`, { method: 'POST', body: JSON.stringify({ a: 1 }), headers: { 'content-type': 'application/json' } });
     expect(echo.status).toBe(201);
