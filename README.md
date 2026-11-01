@@ -6,6 +6,8 @@ at Messenger / WhatsApp scale.
 - [`docs/index.html`](docs/index.html) — the discussion page: requirements with their reasoning and
   challenges, scale numbers, and the tech-stack decision board (open / decided per layer).
   Plain HTML, no build step; open the file or serve `docs/` with any static server.
+- [`docs/design.md`](docs/design.md) — decisions so far (heartbeat and reconnect, history pagination),
+  and [`docs/diagrams/high-level.html`](docs/diagrams/high-level.html), the interactive architecture diagram.
 - [`docs/specification.md`](docs/specification.md) — the brief: requirements, scale, the
   decisions the design must make, evaluation rubric, follow-up extensions.
 - `docs/estimation.md`, `docs/design.md`, `docs/tradeoffs.md`, `docs/diagrams/` — the design

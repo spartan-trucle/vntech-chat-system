@@ -2,3 +2,4 @@
 .claude/worktrees/
 node_modules/
 .claude/launch.json
+docs/diagrams/*.visual-check.*

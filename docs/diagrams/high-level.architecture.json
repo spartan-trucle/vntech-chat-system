@@ -1,0 +1,359 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Chat system architecture",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1250,
+      745
+    ],
+    "views": [
+      {
+        "id": "send-path",
+        "label": "Send a message",
+        "focus": [
+          "clients",
+          "lb",
+          "chat",
+          "store",
+          "redis",
+          "queue"
+        ],
+        "note": "Client over WebSocket to a chat server, durable write, route lookup in Redis, push to the recipient's chat server."
+      },
+      {
+        "id": "offline",
+        "label": "Offline recipient",
+        "focus": [
+          "chat",
+          "queue",
+          "notif",
+          "push",
+          "clients"
+        ],
+        "note": "No route in Redis: the message waits in the device sync queue and the phone is woken through APNs or FCM."
+      },
+      {
+        "id": "history-media",
+        "label": "History and media",
+        "focus": [
+          "clients",
+          "lb",
+          "api",
+          "store",
+          "blob"
+        ],
+        "note": "Everything that is not real-time goes over HTTPS: paging history by cursor and moving media bytes straight to object storage."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "blob",
+      "type": "cloud",
+      "label": "Object storage + CDN",
+      "sublabel": "media up to 10 MB, full size",
+      "pos": [
+        40,
+        110
+      ],
+      "size": [
+        160,
+        68
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API servers",
+      "sublabel": "stateless, HTTPS",
+      "pos": [
+        290,
+        110
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "Message store",
+      "sublabel": "Cassandra, 5-year history",
+      "pos": [
+        540,
+        110
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "clients",
+      "type": "external",
+      "label": "Mobile and web clients",
+      "sublabel": "up to 5 devices per user",
+      "pos": [
+        40,
+        350
+      ],
+      "size": [
+        160,
+        68
+      ]
+    },
+    {
+      "id": "lb",
+      "type": "cloud",
+      "label": "Load balancer",
+      "sublabel": "L4, least connections",
+      "pos": [
+        290,
+        350
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "chat",
+      "type": "backend",
+      "label": "Chat servers",
+      "sublabel": "stateful, WebSocket",
+      "pos": [
+        540,
+        350
+      ],
+      "size": [
+        150,
+        68
+      ],
+      "tag": "core"
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "routing table, presence lease",
+      "pos": [
+        790,
+        350
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "presence",
+      "type": "backend",
+      "label": "Presence service",
+      "sublabel": "online / offline fan-out",
+      "pos": [
+        1040,
+        350
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "discovery",
+      "type": "security",
+      "label": "Service discovery",
+      "sublabel": "etcd; chat servers register",
+      "pos": [
+        290,
+        590
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "queue",
+      "type": "messagebus",
+      "label": "Message sync queue",
+      "sublabel": "one cursor per device",
+      "pos": [
+        540,
+        590
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "notif",
+      "type": "backend",
+      "label": "Notification service",
+      "sublabel": "offline recipients",
+      "pos": [
+        790,
+        590
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "push",
+      "type": "external",
+      "label": "APNs / FCM",
+      "sublabel": "wake the device",
+      "pos": [
+        1040,
+        590
+      ],
+      "size": [
+        150,
+        68
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Real-time core",
+      "wraps": [
+        "chat",
+        "redis",
+        "presence",
+        "queue",
+        "notif"
+      ],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "c-lb",
+      "from": "clients",
+      "to": "lb",
+      "label": "HTTPS + WebSocket",
+      "variant": "emphasis",
+      "labelDy": -44
+    },
+    {
+      "id": "lb-api",
+      "from": "lb",
+      "to": "api",
+      "label": "HTTPS"
+    },
+    {
+      "id": "lb-chat",
+      "from": "lb",
+      "to": "chat",
+      "label": "WebSocket",
+      "variant": "emphasis",
+      "labelDy": -44
+    },
+    {
+      "id": "lb-disc",
+      "from": "lb",
+      "to": "discovery",
+      "label": "healthy chat servers",
+      "variant": "dashed",
+      "labelDy": 40
+    },
+    {
+      "id": "chat-store",
+      "from": "chat",
+      "to": "store",
+      "label": "write message",
+      "variant": "emphasis",
+      "labelDy": -30
+    },
+    {
+      "id": "chat-redis",
+      "from": "chat",
+      "to": "redis",
+      "label": "route lookup, lease",
+      "labelDy": -44
+    },
+    {
+      "id": "chat-queue",
+      "from": "chat",
+      "to": "queue",
+      "label": "append, replay from cursor",
+      "labelDy": 80
+    },
+    {
+      "id": "redis-pres",
+      "from": "redis",
+      "to": "presence",
+      "label": "state change",
+      "labelDy": -44
+    },
+    {
+      "id": "pres-chat",
+      "from": "presence",
+      "to": "chat",
+      "label": "notify friends",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom"
+    },
+    {
+      "id": "queue-notif",
+      "from": "queue",
+      "to": "notif",
+      "label": "no route: offline",
+      "labelDy": 44
+    },
+    {
+      "id": "notif-push",
+      "from": "notif",
+      "to": "push",
+      "label": "push hint, no body",
+      "labelDy": 44
+    },
+    {
+      "id": "api-store",
+      "from": "api",
+      "to": "store",
+      "label": "page history by cursor",
+      "labelDy": -44
+    },
+    {
+      "id": "api-blob",
+      "from": "api",
+      "to": "blob",
+      "label": "pre-signed URL",
+      "labelDy": -44
+    },
+    {
+      "id": "clients-blob",
+      "from": "clients",
+      "to": "blob",
+      "label": "upload / download bytes",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Two paths, never mixed",
+      "items": [
+        "The WebSocket carries only new messages, receipts and presence",
+        "History paging and media bytes go over HTTPS"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Still open on the board",
+      "items": [
+        "Runtime for the chat servers: Kotlin on Netty or BEAM",
+        "Presence fan-out at 10 M concurrent users"
+      ]
+    }
+  ]
+}

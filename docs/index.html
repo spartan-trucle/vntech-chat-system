@@ -218,6 +218,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   <div class="intro">
     <h2>Choosing the stack, one layer at a time</h2>
     <p>Each layer gets the question it has to answer, the candidates, the criteria that actually discriminate, a lean, and the best argument against that lean. "Open" means we have not argued it yet. A layer only turns "decided" after the counterpoint has been answered in writing.</p>
+    <p>The high-level picture these layers add up to is in the <a href="diagrams/high-level.html">architecture diagram</a> (interactive; use the three guided views for the send path, the offline path, and history and media).</p>
   </div>
 
   <article class="layer">
@@ -337,7 +338,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <p>Answer these in order. Each one closes at least one "open" layer above.</p>
   </div>
   <ol class="asks">
-    <li><s>Is this exercise optimising for learning the canonical design or for what we would actually run?</s> <strong>Answered: canonical design</strong> (Alex Xu ch. 12). Closed transport, store, ID and the fan-out direction. Did <em>not</em> close the runtime: the book is language-agnostic, so BEAM vs Kotlin is still open.</li>
+    <li><s>Is this exercise optimising for learning the canonical design or for what we would actually run?</s> <strong>Answered: the textbook design</strong> (Alex Xu, ch. 12). That answer decided four layers above: WebSocket, the wide-column store, Snowflake IDs, and direct push with a sync queue. It did not decide the programming language, because the book never names one. So "Kotlin or Elixir for the chat servers" is still an open question.</li>
     <li>Where is latency measured? If it is server ingress to server egress, Kafka in the hot path is affordable. If it is device to device, it probably is not.</li>
     <li>What is the group-size roadmap? If 100 is forever, fan-out on write is fine. If 10 000 is a follow-up, design the threshold now.</li>
     <li>Is 10 seconds for presence a product promise or a placeholder? Each halving roughly doubles the heartbeat load on Redis.</li>
