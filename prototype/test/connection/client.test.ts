@@ -56,7 +56,7 @@ describe('client mirror rule, reconnect loop and outbox on fake time', () => {
     const c = client();
     await c.connect();
     await c.hello();
-    expect(time.pending()).toBe(3); // server pinger + sweeper, client deadline
+    expect(time.pending()).toBe(4); // server pinger + sweeper + presence lease interval (B6, while a user is online), client deadline
     await time.advance(14_999);
     expect(c.connected).toBe(true);
     await time.advance(1);
@@ -144,7 +144,7 @@ describe('client mirror rule, reconnect loop and outbox on fake time', () => {
     const b = client(DEVICES.trucLaptop);
     const k = client(DEVICES.khanhPhone);
     for (const c of [a, b, k]) { await c.connect(); await c.hello(); }
-    expect(time.pending()).toBe(5);
+    expect(time.pending()).toBe(6); // pinger + sweeper + presence lease interval (B6), three client deadlines
     a.closeCleanly();
     b.destroyWithoutClose();
     k.stop();
@@ -162,7 +162,7 @@ describe('client mirror rule, reconnect loop and outbox on fake time', () => {
     const c = client(DEVICES.khanhPhone, { mirrorRule: false, reconnect: false });
     await c.connect();
     await c.hello();
-    expect(time.pending()).toBe(2);
+    expect(time.pending()).toBe(3); // pinger + sweeper + presence lease interval (B6); no client timer
     await server.ctx.kill(server.ctx.connections.byDevice('B1')!, 'dead');
     await until(() => !c.connected, 1000, 'closed');
     await time.advance(60_000);
