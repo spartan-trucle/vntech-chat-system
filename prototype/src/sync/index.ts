@@ -142,16 +142,13 @@ export function registerSync(ctx: ServerContext): () => void {
       if (closed) return Promise.resolve('closed');
       if (acked.last !== null && compareStreamIds(acked.last, need) >= 0) return Promise.resolve('acked');
       return new Promise<AckWait>((resolve) => {
+        const pending = { need, settle: (how: AckWait): void => { ctx.timers.clearTimeout(timer); resolve(how); } };
         const timer = ctx.timers.setTimeout(() => {
-          if (waiter?.settle !== settle) return;
+          if (waiter !== pending) return; // already settled by an ack or a close
           waiter = null;
           resolve('timeout');
         }, opts.ackTimeoutMs);
-        const settle = (how: AckWait): void => {
-          ctx.timers.clearTimeout(timer);
-          resolve(how);
-        };
-        waiter = { need, settle };
+        waiter = pending;
       });
     };
 
