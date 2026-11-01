@@ -3,18 +3,18 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 1 (A done, B0 done, wave 1 running, C reviewing)
+Last updated: 2026-11-01, report round 2 (A1 A2 A4 and B0 merged to main; wave 1 running; A3 waiting on the author)
 
 ## Epics
 
 | Epic | Lane | Wave | Status | Branch | Tests | Last report | Blocker |
 |---|---|---|---|---|---|---|---|
-| A1 tradeoffs.md | A | 0 | done, in review (C) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
-| A2 sequence diagrams | A | 0 | done, in review (C) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
-| A4 rubric run | A | 1 | done, in review (C) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
+| A1 tradeoffs.md | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
+| A2 sequence diagrams | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
+| A4 rubric run | A | 1 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
 | A3 open decisions | hub + author | 2 | blocked on author | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
-| B0 scaffold + protocol | B | 0 | done, in review (C) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
+| B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
 | B1 heartbeat + reconnect | B | 1 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B2 send path, store, dedup | B | 1 | in_progress (subagent, own worktree) | claude/b-prototype-297ab9 | | | |
 | B4 history + summary (slow path) | B | 2 | todo | feature/B-prototype | | | |
@@ -24,18 +24,23 @@ Last updated: 2026-11-01, report round 1 (A done, B0 done, wave 1 running, C rev
 | B3 sync queue replay | B | 3 | todo | feature/B-prototype | | | |
 | B8 scenario suite | B | 4 | todo | feature/B-prototype | | | |
 | B9 real Redis | B | 5 (optional) | todo | | | | |
-| C1 integrate (per epic) | C | continuous | reviewing A1+A2+A4, B0 | main @ 78d5811 (checklist) | | | |
+| C1 integrate (per epic) | C | continuous | waiting (4 epics merged) | main @ e4b9a80 | 77 passed on merged tree | none | none |
 | C2 retrospective | C | 4 | todo | main | n/a | | |
 
 ## Merged to main
 
 | Epic | Merge commit | Date |
 |---|---|---|
+| A1, A2, A4 | ec786e5 (closing tasks e4b9a80) | 2026-11-01 |
+| B0 | 3820d58 (closing tasks e4b9a80) | 2026-11-01 |
 
 ## Surprises collected for C2
 
 | Epic | Surprise |
 |---|---|
+| A4 | N2 and N6 were never addressed or deferred; the roadmap predicted only three gaps |
+| A4 | spec §7 row 3 says seven flows, §4.2 has nine (spec typo) |
+| B0 | eight ports were needed, not the five the roadmap named |
 
 ## Decisions for the author (A3 queue)
 
