@@ -1,16 +1,23 @@
 /**
- * Scripted multi-device client (runtime ADR, roadmap B0). It can suppress pongs, turn
- * its radio off without telling anyone (half-open socket), tear the socket down with no
- * close frame, replay a script, and record a hop trace in the page's format.
+ * Scripted multi-device client (runtime ADR, roadmap B0 + B1). It can suppress pongs,
+ * turn its radio off without telling anyone (half-open socket), tear the socket down
+ * with no close frame, replay a script, and record a hop trace in the page's format.
  *
- * B1 extends it with the client mirror rule (no ping for 15 s → reconnect with backoff)
- * and the outbox; B0 leaves those hooks (`lastPingAt`, `cursor`) in place.
+ * B1 (design §1.4): the mirror rule (no ping for 15 s → the socket is half-open, close
+ * it and reconnect), reconnect with backoff 1 · 2 · 4 … 30 s and ±30 % jitter, an outbox
+ * keyed by `client_msg_id` flushed in order after `hello_ack`, and `hello` carrying the
+ * device cursor. The loop only engages for closes the client did not choose: a server
+ * kill, the mirror rule, a dead network. `closeCleanly`, `destroyWithoutClose` and
+ * `stop` are the app going away and never reconnect. Which server to reconnect to is
+ * open (roadmap A3): always the same URL.
  */
 
 import WebSocket from 'ws';
+import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { FixtureDevice } from '../../src/fixtures.js';
-import { decodeFrame, encodeFrame, type AppState, type ClientFrame, type HelloAckFrame, type ServerFrame, type StreamId } from '../../src/protocol.js';
+import { decodeFrame, encodeFrame, type AppState, type ClientFrame, type HelloAckFrame, type MsgFrame, type ServerFrame, type StreamId } from '../../src/protocol.js';
+import type { TimerHandle, Timers } from '../../src/server.js';
 import { Trace } from '../../src/trace.js';
 
 export type FramePredicate = (frame: ServerFrame) => boolean;
@@ -22,12 +29,50 @@ export type ScriptStep =
   | { run: (client: ScriptedClient) => void | Promise<void> }
   | { note: string };
 
+export interface MirrorRuleOptions {
+  /** Design §1.2: no ping seen for this long means the socket is half-open. */
+  noPingAfterMs?: number;
+}
+
+export interface BackoffOptions {
+  baseMs?: number;
+  capMs?: number;
+  /** Fraction of the step, both ways: 0.3 is ±30 %. */
+  jitter?: number;
+  /** Draw in [0, 1); injectable so a test can pin the schedule (0.5 is the step itself). */
+  random?: () => number;
+}
+
+export const DEFAULT_BACKOFF: Required<Omit<BackoffOptions, 'random'>> = { baseMs: 1000, capMs: 30000, jitter: 0.3 };
+export const DEFAULT_MIRROR_RULE: Required<MirrorRuleOptions> = { noPingAfterMs: 15000 };
+
+/** Delay before retry number `attempt` (0-based): `min(base · 2^attempt, cap)`, jittered. */
+export function backoffDelay(attempt: number, opts: Required<Omit<BackoffOptions, 'random'>>, random: () => number): number {
+  const step = Math.min(opts.baseMs * 2 ** attempt, opts.capMs);
+  return Math.round(step * (1 - opts.jitter + 2 * opts.jitter * random()));
+}
+
 export interface ScriptedClientOptions {
   url: string;
   /** Shared trace, so several devices and the server can interleave in one log. */
   trace?: Trace;
   now?: () => number;
+  /** Timers for the mirror deadline and the retry schedule; a test injects `FakeTime`. */
+  timers?: Timers;
+  /** Default on with 15 s; `false` for tests that drive the socket by hand. */
+  mirrorRule?: boolean | MirrorRuleOptions;
+  /** Default on with the §1.4 table; `false` to never reconnect. */
+  reconnect?: boolean | BackoffOptions;
 }
+
+const realTimers: Timers = {
+  setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
+  clearTimeout: (h) => globalThis.clearTimeout(h as NodeJS.Timeout),
+  setInterval: (fn, ms) => globalThis.setInterval(fn, ms),
+  clearInterval: (h) => globalThis.clearInterval(h as NodeJS.Timeout),
+};
+
+const seconds = (ms: number): string => `${Math.round(ms / 100) / 10} s`;
 
 function describeFrame(frame: ClientFrame | ServerFrame): string {
   switch (frame.t) {
@@ -52,21 +97,44 @@ export class ScriptedClient {
   cursor: StreamId | null = null;
   listCursor: number | null = null;
   appState: AppState = 'foreground';
-  /** Wall-clock of the last protocol ping seen; B1's mirror rule reads it. */
+  /** Clock of the last protocol ping seen (connect counts as one); the mirror rule reads it. */
   lastPingAt: number | null = null;
   pongsSuppressed = false;
   radioOff = false;
+  /** Messages not yet answered by `msg_ack`, in send order; flushed after every `hello_ack` (design §1.4). */
+  readonly outbox: MsgFrame[] = [];
+  /** Clock stamp of every automatic reconnect attempt, for schedule assertions. */
+  readonly reconnectAttempts: number[] = [];
+  /** Automatic reconnects that reached `hello_ack`. */
+  reconnects = 0;
 
   private readonly url: string;
   private readonly now: () => number;
+  private readonly timers: Timers;
+  private readonly mirror: Required<MirrorRuleOptions> | null;
+  private readonly backoff: (Required<Omit<BackoffOptions, 'random'>> & { random: () => number }) | null;
   private ws: WebSocket | null = null;
+  /** True between a successful `connect()` and a close the client chose. */
+  private wanted = false;
+  private attempt = 0;
+  private deadline: TimerHandle | null = null;
+  private retry: TimerHandle | null = null;
   private waiters: Array<{ pred: FramePredicate; resolve: (f: ServerFrame) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }> = [];
+  /** Index into `received` below which frames were already matched by `expect`. */
+  private consumed = 0;
 
   constructor(device: FixtureDevice, opts: ScriptedClientOptions) {
     this.device = device;
     this.url = opts.url;
     this.now = opts.now ?? Date.now;
+    this.timers = opts.timers ?? realTimers;
     this.trace = opts.trace ?? new Trace({ now: this.now });
+    const mirror = opts.mirrorRule ?? true;
+    this.mirror = mirror === false ? null : { ...DEFAULT_MIRROR_RULE, ...(mirror === true ? {} : mirror) };
+    const reconnect = opts.reconnect ?? true;
+    this.backoff = reconnect === false
+      ? null
+      : { ...DEFAULT_BACKOFF, random: Math.random, ...(reconnect === true ? {} : reconnect) };
   }
 
   get socket(): WebSocket | null {
@@ -77,22 +145,34 @@ export class ScriptedClient {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
 
+  private get name(): string {
+    return this.device.name;
+  }
+
   private tcp(): Socket | undefined {
     return (this.ws as unknown as { _socket?: Socket } | null)?._socket;
   }
 
+  /** Opens the socket; rejects with `no network` while the radio is off, like a real dead link. */
   async connect(): Promise<void> {
+    if (this.radioOff) throw new Error(`${this.name}: no network`);
     const ws = new WebSocket(this.url, { autoPong: false });
     this.ws = ws;
     ws.on('ping', () => {
+      if (this.radioOff) return;
       this.lastPingAt = this.now();
-      if (!this.pongsSuppressed && !this.radioOff) ws.pong();
+      this.armMirror();
+      if (!this.pongsSuppressed) ws.pong();
     });
     ws.on('message', (data) => {
       if (this.radioOff) return;
       const frame = decodeFrame(data.toString(), 'server');
       this.received.push(frame);
-      this.trace.add(frame.t, `← ${this.device.name}: ${describeFrame(frame)}`);
+      this.trace.add(frame.t, `← ${this.name}: ${describeFrame(frame)}`);
+      if (frame.t === 'msg_ack') {
+        const i = this.outbox.findIndex((m) => m.client_msg_id === frame.client_msg_id);
+        if (i >= 0) this.outbox.splice(i, 1);
+      }
       const i = this.waiters.findIndex((w) => w.pred(frame));
       if (i >= 0) {
         const [w] = this.waiters.splice(i, 1);
@@ -101,17 +181,35 @@ export class ScriptedClient {
       }
     });
     ws.on('close', (code) => {
-      this.trace.add('hb', `${this.device.name}: socket closed (${code})`);
+      if (this.ws !== ws) {
+        // Already replaced or torn down by the mirror rule; that path wrote its own row.
+        return;
+      }
+      this.ws = null;
+      this.disarmMirror();
+      if (this.wanted && this.backoff && this.retry === null) {
+        this.scheduleReconnect((delay) => `${this.name}: socket closed (${code}) → reconnect in ${seconds(delay)}`);
+      } else {
+        this.trace.add('hb', `${this.name}: socket closed (${code})`);
+      }
     });
     ws.on('error', () => { /* surfaced as close */ });
-    await new Promise<void>((resolve, reject) => {
-      ws.once('open', () => resolve());
-      ws.once('error', reject);
-    });
-    this.trace.add('hb', `${this.device.name}: WS connect`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.once('open', () => resolve());
+        ws.once('error', reject);
+      });
+    } catch (e) {
+      if (this.ws === ws) this.ws = null;
+      throw e;
+    }
+    this.wanted = true;
+    this.lastPingAt = this.now();
+    this.armMirror();
+    this.trace.add('hb', `${this.name}: WS connect`);
   }
 
-  /** Sends hello with the device's cursors and waits for hello_ack. */
+  /** Sends hello with the device's cursors, waits for hello_ack, then flushes the outbox. */
   async hello(over: Partial<Pick<ClientFrame & { t: 'hello' }, 'app_state'>> = {}): Promise<HelloAckFrame> {
     this.send({
       t: 'hello',
@@ -121,16 +219,38 @@ export class ScriptedClient {
       list_cursor: this.listCursor,
       app_state: over.app_state ?? this.appState,
     });
-    return (await this.expect('hello_ack')) as HelloAckFrame;
+    const ack = (await this.expect('hello_ack')) as HelloAckFrame;
+    this.flushOutbox();
+    return ack;
   }
 
   send(frame: ClientFrame): void {
     if (this.radioOff || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.trace.add('lost', `${frame.t} from ${this.device.name}: radio off, frame never leaves the device`);
+      this.trace.add('lost', `${frame.t} from ${this.name}: radio off, frame never leaves the device`);
       return;
     }
-    this.trace.add(frame.t, `${this.device.name} → ${describeFrame(frame)}`);
+    this.trace.add(frame.t, `${this.name} → ${describeFrame(frame)}`);
     this.ws.send(encodeFrame(frame));
+  }
+
+  /**
+   * Writes a message to the outbox with a client-generated `client_msg_id` and sends it now
+   * if the socket is live; otherwise it waits for the next `hello_ack` (design §1.4: the
+   * client never waits for the heartbeat to send). The entry leaves on `msg_ack`.
+   */
+  sendMessage(msg: Omit<MsgFrame, 't' | 'client_msg_id'> & { client_msg_id?: string }): MsgFrame {
+    const { client_msg_id, ...rest } = msg;
+    const frame: MsgFrame = { t: 'msg', client_msg_id: client_msg_id ?? randomUUID(), ...rest };
+    this.outbox.push(frame);
+    if (this.connected && !this.radioOff) this.send(frame);
+    else this.trace.add('note', `${this.name} queues {cid:${frame.client_msg_id.slice(0, 8)}} in the outbox (offline)`);
+    return frame;
+  }
+
+  /** Resends every unacked message in order with its original `client_msg_id`; the server dedups (B2). */
+  flushOutbox(): void {
+    if (this.outbox.length === 0 || !this.connected) return;
+    for (const frame of [...this.outbox]) this.send(frame);
   }
 
   /** Acks a replay batch and advances the device-owned cursor (design §4.7). */
@@ -152,7 +272,7 @@ export class ScriptedClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters = this.waiters.filter((w) => w.timer !== timer);
-        reject(new Error(`${this.device.name}: no ${label} within ${timeoutMs} ms`));
+        reject(new Error(`${this.name}: no ${label} within ${timeoutMs} ms`));
       }, timeoutMs);
       this.waiters.push({
         pred,
@@ -162,13 +282,11 @@ export class ScriptedClient {
       });
     });
   }
-  /** Index into `received` below which frames were already matched by `expect`. */
-  private consumed = 0;
 
   /** Simulates a client whose transport never answers pings (ADR risk: `ws` auto-pong). */
   suppressPongs(): void {
     this.pongsSuppressed = true;
-    this.trace.add('note', `${this.device.name}: pongs suppressed`);
+    this.trace.add('note', `${this.name}: pongs suppressed`);
   }
 
   allowPongs(): void {
@@ -179,22 +297,32 @@ export class ScriptedClient {
   blackhole(): void {
     this.radioOff = true;
     this.tcp()?.pause();
-    this.trace.add('note', `${this.device.name}: network dropped (unclean: no close frame, nobody is told)`);
+    this.trace.add('note', `${this.name}: network dropped (unclean: no close frame, nobody is told)`);
   }
 
+  /** Radio back. A pending retry fires on its schedule; the loop is not short-cut. */
   restoreRadio(): void {
     this.radioOff = false;
     this.tcp()?.resume();
-    this.trace.add('note', `${this.device.name}: network restored`);
+    this.trace.add('note', `${this.name}: network restored`);
   }
 
-  /** Tears the TCP connection down with no WebSocket close frame (the server sees 1006). */
+  /** The app is gone: tears the TCP connection down with no close frame (the server sees 1006), no reconnect. */
   destroyWithoutClose(): void {
+    this.giveUp();
     this.ws?.terminate();
   }
 
+  /** The app closes on purpose: close frame 1000, no reconnect. */
   closeCleanly(): void {
+    this.giveUp();
     this.ws?.close(1000);
+  }
+
+  /** Teardown for tests: stops every timer and drops the socket; never reconnects. */
+  stop(): void {
+    this.destroyWithoutClose();
+    for (const w of this.waiters.splice(0)) clearTimeout(w.timer);
   }
 
   async replay(script: ScriptStep[]): Promise<void> {
@@ -205,5 +333,74 @@ export class ScriptedClient {
       else if ('run' in step) await step.run(this);
       else if ('note' in step) this.trace.add('note', step.note);
     }
+  }
+
+  // ---- mirror rule and reconnect (design §1.2, §1.4) ---------------------------------
+
+  private giveUp(): void {
+    this.wanted = false;
+    this.disarmMirror();
+    if (this.retry !== null) {
+      this.timers.clearTimeout(this.retry);
+      this.retry = null;
+    }
+  }
+
+  private armMirror(): void {
+    if (!this.mirror) return;
+    this.disarmMirror();
+    this.deadline = this.timers.setTimeout(() => this.onMirrorExpired(), this.mirror.noPingAfterMs);
+  }
+
+  private disarmMirror(): void {
+    if (this.deadline === null) return;
+    this.timers.clearTimeout(this.deadline);
+    this.deadline = null;
+  }
+
+  private onMirrorExpired(): void {
+    this.deadline = null;
+    const ws = this.ws;
+    if (!ws || !this.mirror) return;
+    this.ws = null;
+    ws.terminate();
+    const silent = seconds(this.mirror.noPingAfterMs);
+    if (this.wanted && this.backoff) {
+      this.scheduleReconnect((delay) => `${this.name}: no ping for ${silent} → socket is half-open, close and reconnect in ${seconds(delay)}`);
+    } else {
+      this.trace.add('hb', `${this.name}: no ping for ${silent} → socket is half-open, closed`);
+    }
+  }
+
+  private scheduleReconnect(describe: (delayMs: number) => string): void {
+    if (!this.backoff || this.retry !== null) return;
+    const delay = backoffDelay(this.attempt, this.backoff, this.backoff.random);
+    this.trace.add('hb', describe(delay));
+    this.retry = this.timers.setTimeout(() => {
+      this.retry = null;
+      void this.tryReconnect();
+    }, delay);
+  }
+
+  private async tryReconnect(): Promise<void> {
+    if (!this.wanted) return;
+    this.reconnectAttempts.push(this.now());
+    this.attempt += 1;
+    const attempt = this.attempt;
+    try {
+      await this.connect();
+      const pending = this.outbox.length;
+      this.trace.add('hb', `${this.name}: reconnected on attempt ${attempt}, ${pending === 0 ? 'outbox empty' : `flushing ${pending} from the outbox with the same client_msg_ids`}`);
+      await this.hello();
+    } catch (e) {
+      const ws = this.ws;
+      this.ws = null;
+      ws?.terminate();
+      const reason = this.radioOff ? 'no network' : e instanceof Error ? e.message : String(e);
+      this.scheduleReconnect((delay) => `${this.name} reconnect failed (${reason}); next try in ${seconds(delay)}`);
+      return;
+    }
+    this.attempt = 0;
+    this.reconnects += 1;
   }
 }
