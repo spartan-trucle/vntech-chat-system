@@ -17,8 +17,9 @@ is sized to it. Discord-style channels at 10 k+ are a different product shape an
 their own design pass (spec §8.3), not a threshold hidden in this one.
 
 Prototype (decided 2026-11-01): the exercise **will** produce a prototype chat server to
-exercise the heartbeat, reconnect and replay design in §1 and §4. The runtime question is
-therefore load-bearing; see the discussion page, argument 7.
+exercise the heartbeat, reconnect and replay design in §1 and §4. Prototype runtime: **Node.js + TypeScript with `ws`**, chosen for speed because the
+prototype proves protocol correctness, not connection count. Production runtime is not
+decided. ADR: `.memory/decisions/2026-11-01-prototype-runtime-nodejs.md`.
 
 Frame (decided 2026-11-01): **the canonical architecture** from Alex Xu, *System Design
 Interview* ch. 12 — stateless API servers, stateful chat servers over WebSocket, a presence
@@ -493,7 +494,7 @@ queue; the queue replay later dedups by message ID on the client.
 
 ## Open on the board after this section
 
-- Runtime (Kotlin/Netty vs BEAM vs Go) — still the first unanswered question.
+- Production runtime — deliberately undecided; the prototype is Node.js (ADR above).
 - Presence fan-out: §1.5 decides how *offline* is detected; it does not decide how 10 M
   state changes reach friends' screens.
 - Sync-queue backing: §4.2 is written as a Cassandra table; Redis Streams or Kafka could

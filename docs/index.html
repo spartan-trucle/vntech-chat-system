@@ -266,17 +266,17 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   </article>
 
   <article class="layer">
-    <header><h3>Chat server runtime</h3><span class="state open">open</span><p class="q">What holds millions of idle connections cheaply and routes messages between them?</p></header>
+    <header><h3>Chat server runtime</h3><span class="state decided">decided for the prototype</span><p class="q">What holds millions of idle connections cheaply and routes messages between them?</p></header>
     <p class="crit">Criteria: memory per idle connection, scheduler behaviour under 100 k connections per node, what the team can operate at 3 a.m.</p>
     <div class="cands">
-      <div class="cand lean"><b>Kotlin on Netty (Ktor / Micronaut)</b><span>The team's stack. Netty handles the connection count; the JVM wants tuning for memory per socket.</span></div>
+      <div class="cand"><b>Kotlin on Netty (Ktor / Micronaut)</b><span>The team's stack. Netty handles the connection count; the JVM wants tuning for memory per socket.</span></div>
       <div class="cand"><b>Elixir / Erlang (BEAM)</b><span>The textbook answer. WhatsApp and Discord's gateway. Per-connection processes, built-in supervision. New language for the team.</span></div>
       <div class="cand"><b>Go</b><span>Goroutine per connection, small memory footprint, simple deploys. No actor model; you build supervision yourself.</span></div>
-      <div class="cand"><b>Node.js</b><span>Fast to prototype, single-threaded event loop; needs a cluster per core and careful backpressure.</span></div>
+      <div class="cand lean"><b>Node.js + TypeScript</b><span>Fastest to prototype; <code>ws</code> exposes ping/pong directly. Single-threaded, so it proves the protocol, not the connection count.</span></div>
     </div>
     <div class="verdict">
-      <div><span class="lbl">Lean</span><p>Kotlin, because operating a system you know beats a system that is theoretically better. Netty is proven at this connection count.</p></div>
-      <div class="against"><span class="lbl">Strongest case against</span><p>This is practice, not production. If the point is to learn why chat systems look the way they do, BEAM is the language the problem was shaped by. Picking the familiar stack may be picking the lesson we skip.</p></div>
+      <div><span class="lbl">Decision</span><p>Node.js with TypeScript for the prototype, because the prototype proves protocol correctness and that is the fastest path. The production runtime is deliberately not decided; Kotlin on Netty remains the default for real work. Argument 7 below.</p></div>
+      <div class="against"><span class="lbl">Counterpoint, parked</span><p>BEAM is the language this problem was shaped by, and a Node prototype teaches nothing about connections per node. Both true, both outside the prototype's stated goal.</p></div>
     </div>
   </article>
 
@@ -452,14 +452,15 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <p class="ruling"><strong>Direction decided</strong> (direct push plus sync queue for catch-up), and the queue itself survived argument 8. <strong>Open:</strong> what backs the queue, once the write volume is estimated.</p>
   </article>
 
-  <article class="arg open">
-    <h3>7. Chat-server runtime: Kotlin on Netty, Elixir, or Go<span class="status o">open</span></h3>
+  <article class="arg">
+    <h3>7. Chat-server runtime<span class="status d">decided: Node.js for the prototype</span></h3>
     <p>The first unanswered question after the canonical frame. Before comparing the three, the challenge on the table is whether the decision is load-bearing at all.</p>
     <div class="side">
       <div class="against"><span class="lbl">The challenge</span>Every decision so far shows up in an artifact: the store shapes the schema, the transport shapes the heartbeat protocol, the ID shapes the cursor. The runtime shapes none of them; all three candidates hold 100 k sockets per node. So: <strong>what will be different in this repository depending on the runtime?</strong> If the answer is "a line in design.md", the verdict is "revisit when there is code" and the hour goes to presence fan-out instead.</div>
       <div class="for"><span class="lbl">When it would matter</span>If the exercise ends in a prototype chat server to test the heartbeat design, the runtime matters a lot, and the argument becomes "which runtime teaches the most per week of practice", not "which is best for WhatsApp". Then BEAM is the strongest candidate precisely because it is the one nobody would pick at work.</div>
     </div>
-    <p class="ruling"><strong>Open, reframed.</strong> There will be a prototype, so the runtime matters. The argument is now "which runtime teaches the most per week of practice", and the next question is what the prototype must prove: the heartbeat and replay <em>protocol</em> (correctness, any runtime will do, pick the fastest to write) or the <em>connection count</em> per node (then the runtime's socket model is the lesson).</p>
+    <p>Truc answered: there will be a prototype, its job is to prove the heartbeat, reconnect and replay protocol, not connection count, and the shortlist is Kotlin or Node.js with "fastest" as the criterion.</p>
+    <p class="ruling"><strong>Decided: Node.js with TypeScript and <code>ws</code> for the prototype.</strong> Protocol-level ping/pong is exposed directly, one file runs in minutes, and the load-balancer repo already uses the same tooling. Kotlin costs half a day of framework setup before the first line of protocol logic. Accepted risks: nothing transfers to the Kotlin stack, and a single-threaded Node process says nothing about connections per node; if that question becomes real, it gets its own prototype. The production runtime is a separate decision. ADR: <code>.memory/decisions/2026-11-01-prototype-runtime-nodejs.md</code>.</p>
   </article>
 
   <article class="arg">
@@ -489,7 +490,7 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
     <li><s>Do read receipts in groups need per-member tracking, or is "read by N" enough?</s> <strong>Answered: per member.</strong> Made affordable by storing one read cursor per member per conversation instead of a receipt per message, and by coalescing receipt pushes (design.md §3).</li>
     <li><s>Does the server keep history forever, or is it a relay with device-side storage?</s> <strong>Answered: forever, server-side.</strong> The month-bucketed partitions in design.md §2 already assume this; retention becomes a tiering question only.</li>
     <li>For media: regional buckets or global CDN? Full-size delivery without variants makes the CDN case weaker than usual.</li>
-    <li><s>Is the exercise going to produce a prototype chat server, or only the design?</s> <strong>Answered: a prototype.</strong> The runtime question is load-bearing; argument 7 continues with "what must the prototype prove?".</li>
+    <li><s>Is the exercise going to produce a prototype chat server, or only the design?</s> <strong>Answered: a prototype, in Node.js + TypeScript,</strong> to prove the heartbeat, reconnect and replay protocol (argument 7).</li>
     <li><s>Does a reconnecting device need a sync queue, or is "compare cursors, then page the store" enough?</s> <strong>Answered: keep the queue</strong> for ordered replay, plus a conversation summary read for the chat list (argument 8). Open: what backs the queue, after the write volume is estimated.</li>
   </ol>
 </section>
