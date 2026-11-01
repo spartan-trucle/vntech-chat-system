@@ -23,6 +23,7 @@
  * `PushGateway`, after the mute hook, and never the body.
  */
 
+import { USERS, deviceName } from '../fixtures.js';
 import type { Connection, ServerContext } from '../server.js';
 import type { ConversationId, UserId } from '../protocol.js';
 import { InMemoryPushGateway, type PushGateway } from './PushGateway.js';
@@ -117,8 +118,50 @@ export function registerReceipts(ctx: ServerContext): () => void {
     }
   });
 
+  // ---- after the direct pushes (design §3.3 delivery cursors, §3.6 notifications) ----------
+  const offFanout = ctx.events.on('message_fanout', async ({ message, recipient_devices, pushed }) => {
+    const { conversation_id, message_id, sender_id } = message;
+    // `recipient_devices` is every member device minus the sending one, so the sending device
+    // is the sender's one registered device that is not listed.
+    const sender_device = (await ctx.ports.devices.devicesOf(sender_id)).map((d) => d.device_id).find((d) => !recipient_devices.includes(d));
+
+    // The sender has read and received their own message (the page does the same on store).
+    // No frame for this: the sender's other devices get the `deliver` itself.
+    await ctx.ports.cursors.advanceRead(conversation_id, sender_id, message_id);
+    const advanced: string[] = [];
+    if (sender_device) {
+      await ctx.ports.cursors.advanceDelivery(conversation_id, sender_device, message_id);
+      advanced.push(`${deviceName(sender_device, sender_id)} (sender)`);
+    }
+    // A device in `pushed` got the `deliver` over a live socket. Acks of a replay batch are B3's.
+    for (const device_id of pushed) {
+      await ctx.ports.cursors.advanceDelivery(conversation_id, device_id, message_id);
+      advanced.push(`${ctx.connections.byDevice(device_id)?.name ?? deviceName(device_id)} (over the socket)`);
+    }
+    if (advanced.length > 0) ctx.trace.add('receipt', `delivery_cursors[${conversation_id}] ← #${message_id} for ${advanced.join(', ')}`);
+
+    // Push hints for the rest. A device that still has a route (replaying, or back-pressured)
+    // is live: the queue carries the message, APNs does not (§3.6 step 1).
+    const sender_display_name = USERS[sender_id]?.name ?? sender_id;
+    for (const device_id of recipient_devices) {
+      if (pushed.includes(device_id)) continue;
+      const device = await ctx.ports.devices.get(device_id);
+      if (!device) continue;
+      if ((await ctx.ports.routes.get(device.user_id, device_id)) !== undefined) continue;
+      const name = deviceName(device_id, device.user_id, device.kind);
+      if (await opts.isMuted(conversation_id, device.user_id)) {
+        ctx.trace.add('apns', `#${message_id} → ${name}: muted, no push`);
+        continue;
+      }
+      // Never the body: it would leave our boundary and go stale on delete (§3.6 step 2).
+      await opts.pushGateway.push(device_id, { conversation_id, message_id, sender_display_name });
+      ctx.trace.add('apns', `#${message_id} → ${name}: no route → push hint {conv, id, from}, no body`);
+    }
+  });
+
   return () => {
     offDisconnected();
+    offFanout();
     openSet.clear();
   };
 }
