@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 13 (lane B complete: B8 on lane 252f739, handed to C; C2 unblocked after the B8 merge; A3 service discovery under debate)
+Last updated: 2026-11-01, report round 14 (B8 merged 3505098, C2 written 82c53d1; all B epics and C2 on main; A3 under debate, three new author questions from C2)
 
 ## Epics
 
@@ -22,10 +22,10 @@ Last updated: 2026-11-01, report round 13 (lane B complete: B8 on lane 252f739, 
 | B6 presence | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ b637832 | 221 passed (lane), 140 alone | five assertions in three B0/B1 tests amended (lease interval exists while online; `watch` now answered); core unhandled-frame path has no probe left | none |
 | B7 media stub | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ d7ea3ea | 133 passed (lane) | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
 | B3 sync queue replay | B | 3 | merged (806a9ec) | claude/b-prototype-297ab9 @ 27365ec | 242 passed (lane, 3 runs), 212 alone | core defect: per-connection frame chain held acks behind hello during replay; fixed in core. Client acks on a heuristic (batch size or 20 ms gap) since nothing on the wire marks batch end | none |
-| B8 scenario suite | B | 4 | done on lane (252f739), in review (C) | claude/b-prototype-297ab9 @ 252f739 | 258 passed (2 runs); scenarios 6/6 fake time and S1+S5 on real timers | S1: server debounce expiry (t+11+5) coincides with the client's first reconnect (15+1), watcher sees offline then online in the same second; 250 queued messages ≈ 1500 trace rows, near the 2000 cap | none |
+| B8 scenario suite | B | 4 | merged (3505098) | claude/b-prototype-297ab9 @ 252f739 | 258 passed (2 runs); scenarios 6/6 fake time and S1+S5 on real timers | S1: server debounce expiry (t+11+5) coincides with the client's first reconnect (15+1), watcher sees offline then online in the same second; 250 queued messages ≈ 1500 trace rows, near the 2000 cap | none |
 | B9 real Redis | B | 5 (optional) | not started, awaiting the author's ask | | | ports and contract tests ready | author |
-| C1 integrate (per epic) | C | continuous | reviewing B8 (range 27365ec..252f739) | main @ 806a9ec | | | |
-| C2 retrospective | C | 4 | unblocked, starts after the B8 merge | main | n/a | | |
+| C1 integrate (per epic) | C | continuous | done for every B and A epic; idle until A3 produces text | main @ 82c53d1 | 258 passed + scenarios 6/6 on merged tree | none | none |
+| C2 retrospective | C | 4 | done (82c53d1) | main | n/a | 15 findings in design.md §7, six written back in place, four ADRs amended, board section, README and memory links | three questions for the author, listed below |
 
 ## Merged to main
 
@@ -36,6 +36,8 @@ Last updated: 2026-11-01, report round 13 (lane B complete: B8 on lane 252f739, 
 | B1, B2 | 6a81830 (no notebook changes needed) | 2026-11-01 |
 | B4, B5, B6, B7 | 83c4e88 (no notebook changes needed) | 2026-11-01 |
 | B3 | 806a9ec (no notebook changes needed) | 2026-11-01 |
+| B8 | 3505098 (closing tasks 4013a9d) | 2026-11-01 |
+| C2 | 82c53d1 | 2026-11-01 |
 
 ## Surprises collected for C2
 
@@ -71,3 +73,11 @@ moves a rubric row.
 | 6 | N2 availability statement for send/receive, and N6 membership check at the history API, summary read and `msg` frame plus one TLS sentence, or explicit deferral | N2, N6 | open (new from A4) |
 
 Also flagged by A4: spec §7 row 3 says "seven flows" but §4.2 has nine; a spec typo, not a design gap.
+
+### Added by C2 (design.md §7, end of the open list)
+
+| # | Decision needed | Closes | Status |
+|---|---|---|---|
+| 7 | Replay batch end: a `batch_end` flag on the last deliver of a batch, or a `replay_done` frame, so the client stops acking on a heuristic | design §4.7 | open |
+| 8 | Delivery cursor: advance it on the replay ack instead of §3.4's separate delivered receipt | design §3.4, §4.4 | open |
+| 9 | Debounce versus reconnect: `dead + debounce` (11 + 5 = 16 s) must exceed `mirror + first backoff` (15 + 1 = 16 s) by a margin; today it fails by ~1.3 s. Pick the relation and the numbers | design §5.2, §1.4 | open |
