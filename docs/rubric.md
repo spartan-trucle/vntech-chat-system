@@ -1,6 +1,8 @@
 # Rubric run — specification §7 against the design
 
-Run on 2026-11-01 (epic A4) against [`design.md`](design.md),
+Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1) after A3 decision 1 closed
+service discovery; no row was re-scored, only the gaps behind rows 3, 7 and 8 changed.
+Run against [`design.md`](design.md),
 [`estimation.md`](estimation.md), [`tradeoffs.md`](tradeoffs.md),
 [`diagrams/flows.md`](diagrams/flows.md), [`diagrams/high-level.html`](diagrams/high-level.html),
 the four ADRs in `.memory/decisions/` and the discussion page. Each row restates the
@@ -12,12 +14,12 @@ to epic A3.
 |---|------|-------|-------------------|
 | 1 | Requirements | **fail** | N2 (availability) and N6 (security) are neither addressed nor explicitly deferred |
 | 2 | Estimation | pass | |
-| 3 | Architecture | pass | caveat: two flows end at a note marked open (service discovery, reply quoting) |
+| 3 | Architecture | pass | caveat: one flow ends at a note marked open (reply quoting); the service-discovery note in flows 2 and 5 was cleared 2026-11-02 |
 | 4 | Storage | pass | |
 | 5 | Media | pass | |
 | 6 | Delivery | pass | caveat: the fan-out threshold is a product boundary (100 → write, 10 k+ → read), not a computed crossover |
-| 7 | Trade-offs | **fail** | five §5 bullets, or halves of bullets, have no decision and so no rejected alternative |
-| 8 | Failure modes | **fail** | store-primary loss has no recovery story; single-server loss has one except for who runs mark-all-offline |
+| 7 | Trade-offs | **fail** | three §5 bullets, or halves of bullets, have no decision and so no rejected alternative (five on 2026-11-01; 5.2.2 and 5.8.1 closed 2026-11-02) |
+| 8 | Failure modes | **fail** | store-primary loss has no recovery story; single-server loss has a complete one since 2026-11-02 |
 | 9 | Clarity | pass | |
 
 Six of nine pass. The three fails are the ones the roadmap predicted, with one change:
@@ -84,11 +86,13 @@ asking a question.* (§4.2 now lists nine flows; all nine are drawn.)
   send, offline and history/media paths.
 - Every arrow traces to a `design.md` section or the board; nothing is drawn that the
   design does not say.
-- **Caveat, not a fail:** two traces end at a note marked *open*: which registry
-  answers `GET /chat-servers` (flows 2 and 5) and how the quoted excerpt is rendered
-  (flow 9). The newcomer learns that the design has not decided, which is an answer;
-  the decisions themselves are scored in rows 7 and 8. Under a stricter reading this
-  row fails until A3 closes those two.
+- **Caveat, not a fail:** one trace ends at a note marked *open*: how the quoted
+  excerpt is rendered (flow 9). The newcomer learns that the design has not decided,
+  which is an answer; the decision itself is scored in row 7. Under a stricter reading
+  this row fails until A3 closes it. On 2026-11-01 flows 2 and 5 carried a second open
+  note, which registry answers `GET /chat-servers`; closed 2026-11-02 (no registry, a
+  load balancer with an app-level health check; the lease is the only cleanup), and
+  the two flows now draw the balancer and the lease expiry.
 - Also noted: the spec row says "seven flows" while §4.2 has nine. The spec grew
   (media and reply were added) and the rubric row was not updated. Not a design gap;
   flagged to the hub.
@@ -145,15 +149,17 @@ fan-out has a stated threshold.*
 *Pass if every decision in §5 names a rejected alternative.*
 
 - `tradeoffs.md` has one entry per §5 bullet (30) in chosen / rejected / why form,
-  and 26 of them name at least one rejected alternative from the design's own tables.
-- **Gap:** the five bullets, or halves of bullets, that are open in `tradeoffs.md` have
-  no decision and therefore no rejected alternative:
-  - 5.2.2 service discovery, client-facing half (least-loaded server list,
-    mark-all-offline on node loss; etcd / Consul / orchestrator)
+  and 27 of them name at least one rejected alternative from the design's own tables
+  or an ADR.
+- **Gap:** the three bullets, or halves of bullets, that are open in `tradeoffs.md`
+  have no decision and therefore no rejected alternative:
   - 5.3.5 reply quoting (denormalized excerpt vs resolved by ID on render)
-  - 5.8.1 chat-server failure, the mark-all-offline half (same decision as 5.2.2)
   - 5.8.2 message-store primary failure
   - 5.8.4 the five metrics to page on
+- Closed 2026-11-02 (ADR `2026-11-02-no-service-registry.md`): 5.2.2 client-facing
+  half and 5.8.1 cleanup half, which were the other two gaps on 2026-11-01. Both
+  entries now name their rejected alternatives (a registry, a liveness watcher, a
+  30 s lease TTL).
 - Also thin, though not failing: 5.3.3 (only `created_at` was argued against
   Snowflake; the spec's other candidates were not), 5.4.2 and 5.4.5 (the rejected
   option is the one implied by the chosen sentence, with no table row behind it).
@@ -166,11 +172,14 @@ bounded data loss.*
 - Single chat-server loss: the recovery story exists for connections (mirror rule,
   jittered backoff, reconnect elsewhere, §1.4), for in-flight messages (outbox and
   dedup, §1.4) and for stored messages (already in the sync streams by the write-order
-  invariant, §4.2); bounded loss is zero for acknowledged messages. **Gap:** the
-  routing and presence cleanup, `mark-all-offline(server_id)` within seconds (§1.5),
-  has no named owner; it is the open service-discovery decision. Backpressure under a
-  hot group is decided on the board (bounded per-destination buffer, drop to stream)
-  but has no `design.md` section.
+  invariant, §4.2); bounded loss is zero for acknowledged messages. The routing and
+  presence cleanup, which on 2026-11-01 was the gap here (`mark-all-offline` with no
+  owner), is closed 2026-11-02: nobody runs it, the client's reconnect overwrites the
+  route within the mirror rule and the lease is the only presence cleanup, with the
+  5 min window stated in §1.5. Remaining on this half: the ADR's condition that the
+  bounded buffer's timeout is shorter than the N1 p99 budget (500 ms) is not met by
+  the prototype's 5 s default (§7.8); it belongs to the backpressure write-up (item 4
+  below), which is decided on the board but still has no `design.md` section.
 - Store-primary loss: **no recovery story.** The board's CAP answer (RF 3, quorum
   writes, a partition degrades to delayed) and the write-order invariant (no ack
   before the store write, so a degraded store delays "sent" rather than lying) are the
@@ -202,7 +211,7 @@ Each item names the spec bullet it closes and the rubric row it moves.
 
 | # | Decision | Closes | Moves |
 |---|----------|--------|-------|
-| 1 | Service discovery: what answers `GET /chat-servers` with the least-loaded healthy node, and what watches chat-server liveness and runs `mark-all-offline(server_id)`. Candidates on the board: etcd, Consul, the orchestrator | §5.2.2, §5.8.1 (cleanup half) | rows 7, 8; clears the open notes in flows 2 and 5 |
+| 1 | **Closed 2026-11-02.** Service discovery: no registry; a load balancer with an application-level health check and random assignment chooses the server, "least-loaded" dropped; nobody runs `mark-all-offline`, the client's reconnect heals routing and the 5 min lease is the only presence cleanup. ADR `2026-11-02-no-service-registry.md`; written into design §1.4, §1.5, §5.3, §5.5, tradeoffs 5.2.2, 5.8.1, flows 2 and 5 (A3.1) | §5.2.2, §5.8.1 (cleanup half) | done: rows 7 and 8 lost this gap, the open notes in flows 2 and 5 are gone; both rows still fail on items 2 to 5 |
 | 2 | Reply quoting: quoted excerpt denormalized into the reply row, or resolved by ID on render; what the reply shows when the parent is deleted | §5.3.5, F10, flow 9 | row 7; clears the open note in flow 9 |
 | 3 | Message-store primary (replica-set) failure: what the sender sees, how long the ack path waits, what the outbox does, the bound on loss, and the recovery steps | §5.8.2, N2 | rows 1, 8 |
 | 4 | Backpressure: move the board's bounded per-destination buffer and drop-to-stream rule into `design.md` with its budget | §5.8.3 | row 8 (the design text, not a new decision) |

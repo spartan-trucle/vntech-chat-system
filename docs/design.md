@@ -26,6 +26,14 @@ Interview* ch. 12 — stateless API servers, stateful chat servers over WebSocke
 service, a wide-column message store, a per-user message sync queue, Snowflake IDs, push
 notifications. Implementation language is still open.
 
+Service discovery (decided 2026-11-02): **there is no registry.** A device reaches a
+chat server through a plain load balancer with an application-level health check
+(socket accepted, `hello` answered) and random assignment; the "least-loaded" lookup
+is dropped. When a chat server dies nobody runs a `mark-all-offline` job: routing heals
+from the client side within the 15 s mirror rule, and presence is cleaned by the
+existing lease (renew every 2 min, 5 min TTL), so the presence window on a node loss is
+up to 5 min, not seconds. ADR: `.memory/decisions/2026-11-02-no-service-registry.md`.
+
 ---
 
 ## 1. Connection keep-alive, disconnect detection and reconnect
@@ -108,9 +116,16 @@ connected ──(no ping 15 s | close | error)──▶ reconnecting ──(open
 - **Resume, not restart.** The `hello` frame carries the device's `last_synced_message_id`
   cursor; the server replays everything newer from the message sync queue before
   delivering live traffic. No separate "fetch what I missed" round trip.
-- **Which server to reconnect to** is the API layer's problem: `GET /chat-servers`
-  returns the least-loaded healthy node (service discovery, still open on the board).
-  The client does not reconnect to the host it came from.
+- **Which server to reconnect to** is the load balancer's problem, not the client's
+  and not a registry's (decided 2026-11-02, ADR
+  `2026-11-02-no-service-registry.md`). The client connects to one address; the
+  balancer assigns a healthy node at random. Its health check is application-level,
+  a socket accepted and a `hello` answered, so a hung node leaves the pool; a TCP
+  check alone would not. "Least-loaded" is dropped: no figure in `estimation.md` shows
+  load skew across 200 nodes to be a problem, and the jittered backoff above already
+  spreads a crash's 100 k reconnects. `GET /chat-servers` is a static endpoint or
+  disappears behind the balancer's address. Random assignment skews load by a few
+  percent at 100 k sockets per node; accepted, to be revisited only with measured skew.
 
 ### 1.5 Server side: who is disconnected, and what happens then
 
@@ -135,11 +150,32 @@ Presence in Redis is a *lease*: the chat server renews every one of its users' k
 server, §5.5). Compare: writing on every pong would be 20 k/s per server, 2 M/s
 fleet-wide, for nothing.
 
-**Chat-server death** is the only case the lease is for. If a node crashes, its users'
-leases expire within 5 min, which is far slower than F7, so the service-discovery layer
-watches chat-server liveness and, on a node loss, runs a `mark-all-offline(server_id)`
-job that walks the node's routing set within seconds. The lease is the safety net behind
-that job, not the primary mechanism, which is why it can be slow and cheap (§5.5).
+**Chat-server death** is the only case the lease is for, and the lease is the only
+cleanup there is (decided 2026-11-02, ADR `2026-11-02-no-service-registry.md`): no
+component watches chat-server liveness and nothing runs a `mark-all-offline(server_id)`
+job. Each piece of the dead node's state heals on its own:
+
+- **Routing:** every device that was on the node sees no ping for 15 s (mirror rule,
+  §1.2) and reconnects through the balancer within the backoff; its `hello` on the new
+  node overwrites `route:{user_id}:{device_id}`. The stale route lives at most that long.
+- **A message pushed to the dead node** in that window fails inside the bounded
+  per-destination buffer's timeout (board, Component 3; §7.8) and is dropped there. It
+  was already appended to the device's stream by the write order store → ack → queue
+  (§4.2), so the replay after reconnect delivers it. The ADR's condition is that this
+  timeout is shorter than the N1 p99 budget (500 ms), or one dead node raises p99 for
+  every sender fanning out to it; the prototype's default is 5 s (§7.8). Sizing it is
+  part of the backpressure write-up still open on the board.
+- **Presence:** the node's users' leases stop being renewed and expire up to 5 min
+  after the last renewal. For a device that reconnects, presence is rewritten on
+  `hello` and nothing is lost. For a device that lost its server **and** its network at
+  the same moment, presence reads online until the lease expires: **up to 5 min, not
+  the seconds this paragraph used to promise.** Accepted as a bounded error on a
+  coincidence; the window equals the lease TTL. Expiry publishes nothing on `pres:{user}`;
+  a watcher learns the change on its next read of `presence:{user}` (§5.3).
+
+Rejected (ADR): a liveness watcher for that one coincidence, and a 30 s lease TTL to
+shrink the window, which forces renewal every ~10 s, 1.5 M Redis writes/s, three times
+the 500 k/s the presence ADR already rejected (§5.5). The lease stays at 2 min / 5 min.
 
 ### 1.6 Rejected alternatives
 
@@ -149,6 +185,9 @@ that job, not the primary mechanism, which is why it can be slow and cheap (§5.
 | TCP keepalive only | Kernel default is 2 h; even tuned it is invisible to the application on most mobile stacks and does nothing for the client-side half-open case. |
 | Presence derived purely from Redis key TTL refreshed on each pong | 2 M Redis writes/s fleet-wide to answer a question the chat server already knows locally. |
 | Long-poll "heartbeat" via HTTP | Reintroduces a request per interval; the reason WebSocket was chosen. |
+| A registry (etcd, Consul, the orchestrator) answering "least-loaded chat server" | Solves a load-skew problem no estimate shows; a load balancer with an app-level health check does the job (ADR 2026-11-02). |
+| A liveness watcher running `mark-all-offline(server_id)` within seconds of a node loss | The only state it corrects that the client's reconnect does not is presence for a device that lost its server and its network together; a component for a coincidence (ADR 2026-11-02). |
+| Lease TTL of 30 s to shrink that presence window | TTL must exceed the renewal interval, so 30 s forces renewal every ~10 s: 1.5 M Redis writes/s, three times what the presence ADR rejected (ADR 2026-11-02). |
 
 ---
 
@@ -597,7 +636,7 @@ silence meanwhile.
 | Thing | Where | Written by | Read by |
 |-------|-------|-----------|---------|
 | Which devices are connected, and where | Redis routing table `route:{user}:{device}` (§1.5) | chat servers on connect/disconnect | chat servers on delivery |
-| Presence state + `last_seen` | Redis `presence:{user}` with 5 min TTL | the chat server that observed the last transition | the summary read (§4.3) and subscription setup |
+| Presence state + `last_seen` | Redis `presence:{user}` with 5 min TTL, renewed every 2 min; the TTL is the only cleanup after a chat-server death (§1.5, ADR 2026-11-02) | the chat server that observed the last transition | the summary read (§4.3) and subscription setup |
 | Subscriptions: who is watching whom | in the watcher's chat server memory: `watching[target_user] → set(conn)` | chat server on `watch`/`unwatch` frames from the client | the fan-out step below |
 | Cross-server fan-out | Redis pub/sub channel `pres:{user}` | the chat server emitting a transition | every chat server with at least one watcher of that user |
 
@@ -637,9 +676,11 @@ the mirror rule and the first backoff is a question for the author.
 
 - **Detection:** 20 k ping frames/s per server, in memory. Unchanged.
 - **Lease:** 15 M keys renewed every 2 min instead of 30 s → ~125 k Redis writes/s fleet,
-  down from 500 k. The 10 s target did not move; only the crash-recovery lease did,
-  because service discovery already marks a dead server's users offline faster than any
-  lease can (§1.5).
+  down from 500 k. The 10 s target did not move; only the crash-recovery lease did.
+  Nothing marks a dead server's users offline faster than the lease (§1.5, ADR
+  2026-11-02): on a node loss a device that also lost its network shows online for up
+  to the 5 min TTL. A 30 s TTL would close that window at 1.5 M writes/s and was
+  rejected; the numbers here are unchanged by the decision.
 - **Fan-out:** bounded by watchers, not contacts. A user is typically watched by the
   handful of people who have a chat with them open. The worst case is a popular member
   of many open groups; at 100-member groups that is still at most a few hundred watchers,
@@ -896,7 +937,6 @@ queue, which is the board's rule and held under test.
 ## Open on the board after this section
 
 - Production runtime — deliberately undecided; the prototype is Node.js (ADR above).
-- Service discovery: §1.4 and §1.5 both depend on it; ZooKeeper vs etcd vs orchestrator.
 - Batch end on replay: `batch_end` flag or `replay_done` frame (§7.3); and whether the
   replay `ack` should advance the delivery cursor in place of §3.4's delivered receipt.
 - Presence debounce versus the client's reconnect: the relation the 5 s debounce, the
