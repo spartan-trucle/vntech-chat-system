@@ -649,10 +649,10 @@ device                         API servers              chat server          sto
   |                                                       |-- route register --> Redis
   |                                                       |-- subscribe the socket to live pushes, first
   |                                                       |-- replay from cursor -> sync_queue + messages
-  |<-- missed messages (batches of 100), live pushes interleaved --|             |
-  |-- ack per batch (advance cursor) -------------------->|                      |
-  |<-- end-of-replay marker (§7.3, required) ------------|                      |
-  |<-- live traffic, each frame with its entry id --------|                      |
+  |<-- deliver{replay: true}, XRANGE batches back to back, live deliver{replay: false} interleaved --|
+  |-- ack{up_to_stream_id} on the client's cadence (persists the cursor, never a credit) -->|
+  |<-- replay_done --------------------------------------|                      |
+  |<-- live traffic, deliver{replay: false}, stream_id applied to the cursor --|  |
 ```
 
 The list is usable after step 2. Open chats are complete after the replay. If the user
@@ -662,9 +662,11 @@ queue; the queue replay later dedups by message ID on the client.
 
 **The replay runs beside the connection's frame handling, not inside the `hello` handler**
 (prototype, §7.2). The server must keep handling the device's frames while the replay
-waits for each batch's ack, because the ack arrives on the same socket; a server that
-processes one connection's frames strictly in order and lets `hello` block until the
-replay is done deadlocks on the first batch.
+runs, because the acks arrive on the same socket; a server that processes one
+connection's frames strictly in order and lets `hello` block until the replay is done
+deadlocks on the first batch. Since 2026-11-02 the server never waits for an ack
+between batches at all (below): the ack is not a credit, and the shape B3's deadlock
+lived in is gone.
 
 **Live first, then replay** (decided 2026-11-02, ADR
 `2026-11-02-live-first-replay-xadd-auto-id.md`). On `hello{cursor}` the chat server
@@ -684,14 +686,65 @@ does not exist. Three rules follow:
   (§2.2) and the history page returns, so replay, live and paging agree. It is as good
   as the clocks of the Snowflake generators, which is the only system-wide order the
   design commits to; the client has no better one.
-- **Cursor rule.** The device cursor advances on replay batch acks only, until the
-  server marks the end of the replay. A live frame received before that marker is
-  stored, but its queue entry id is not applied to the cursor, because entries between
-  the replay position and that live entry have not been delivered yet. After the
-  marker, each live frame carries its queue entry id (`stream_id` on the `deliver`
-  frame, as flows 1, 3 and 6 draw it) and the device advances the cursor on it as
-  today (§4.7). The end-of-replay marker is §7.3's open item (`batch_end` flag or
-  `replay_done` frame); this decision makes it **required**, whichever form it takes.
+- **Cursor rule.** The device cursor advances on replay acks only while the
+  connection is in replay mode. A live frame received in replay mode is stored, but
+  its queue entry id (`stream_id` on the `deliver` frame, as flows 1, 3 and 6 draw it)
+  is not applied to the cursor, because entries between the replay position and that
+  live entry have not been delivered yet. Outside replay mode each live frame's
+  `stream_id` is applied to the cursor as today (§4.7). Where replay mode begins and
+  ends is the next block.
+
+**End of replay is a mode boundary** (decided 2026-11-02, ADR
+`2026-11-02-replay-mode-boundary.md`). "Batch" is the server's `XRANGE COUNT 100`
+read granularity, not a client concern; the client needs two things only, to persist
+its cursor and to know when the replay has ended. And a single end marker is not
+enough, because the live path is not gapless: a push dropped by the backpressure
+budget (§7.8) is invisible to the device, whose next live frame would carry a higher
+`stream_id` and leave the dropped entry below the cursor for ever, the under-replay
+§4.7 forbids. Only the server knows a push was dropped, so the server acts.
+
+Frames. `deliver` gains a boolean field `replay`: `deliver{replay: true}` for a frame
+pushed by the server's `XRANGE` loop, `deliver{replay: false}` for a live push. One
+new server frame, `replay_done`, carries nothing but its type. No `batch_end`, no
+`replay_start`.
+
+Server rules:
+
+- On `hello{cursor}` the server subscribes the connection to live pushes, then runs
+  `XRANGE (cursor + COUNT 100` until an empty batch, pushing each entry as
+  `deliver{replay: true}`, then sends `replay_done`. It never waits for an ack between
+  batches; the bounded per-destination buffer is the only flow control.
+- When a live push to this connection is dropped by the backpressure budget, the
+  server stops queuing live frames for the connection, lets the buffer drain, runs the
+  same `XRANGE` loop from the dropped entry's `stream_id` (exclusive of what was
+  delivered before it) until empty, sends `replay_done`, and only then resumes live
+  pushes. A further drop during that loop extends it; the loop ends only on an empty
+  read. The server is the only writer on the socket, so no live frame is sent between
+  the drop and the first `replay: true` frame; that frame is the mode switch, which is
+  why no `replay_start` frame is needed (one could not be delivered anyway: the buffer
+  was full at the moment of the drop).
+- The initial replay runs alongside live pushes (nothing was dropped); a backpressure
+  replay runs alone.
+
+Client rules:
+
+- The client acks on its own cadence, `ack{up_to_stream_id}` with the highest
+  `stream_id` of the `replay: true` frames it has stored, for example every 100 replay
+  frames or 500 ms, whichever first (the author's numbers, to confirm). The cursor
+  advances only by these acks while in replay mode (§4.7).
+- Replay mode begins at `hello` and at the first `replay: true` frame after a
+  `replay_done`; it ends at `replay_done`. Outside replay mode the client applies each
+  live frame's `stream_id` to its cursor as today.
+- A live frame received in replay mode is stored but its `stream_id` is not applied to
+  the cursor; the replay loop will reach that entry and the client dedups by
+  `message_id`.
+- Socket order is not message order in replay mode; the client renders from its local
+  store sorted by `message_id` (above).
+
+"End of replay" is therefore a boundary the connection can cross many times, not an
+event that happens once per connection. Item 8 (the delivery cursor of §3.4, B5
+finding 10 in §7.1) is to be decided on this same `ack{up_to_stream_id}`, not on
+push-to-socket; decided separately, but on this mechanism, not another.
 
 ### 4.5 Bounds
 
@@ -742,13 +795,22 @@ failure, which would convert every device to the slow path at once; Kafka offset
 positions inside Kafka topics, not positions in our message store, so they cannot name a
 message ID.
 
-Invariant: **a cursor advances only after the device has acked the batch**, never when
-the server has merely sent it. The ack is the only thing that moves the number.
+Invariant: **a cursor advances only after the device has acked what it stored**, never
+when the server has merely sent it. The ack is the only thing that moves the number.
 
-Open (prototype, §7.3): nothing on the wire marks the end of a batch, so a device
-cannot tell a full batch from the start of a larger one; a `batch_end` flag on the last
-`deliver` or a `replay_done` frame is needed. The prototype acks on a count or a 20 ms
-silence meanwhile.
+**The ack persists the cursor and nothing else** (decided 2026-11-02, ADR
+`2026-11-02-replay-mode-boundary.md`). `ack{up_to_stream_id}` is cumulative, so the
+client sends it on its own cadence, with the highest `stream_id` of the
+`deliver{replay: true}` frames it has stored: for example every 100 replay frames or
+500 ms, whichever first (the author's numbers, to confirm). A late ack only
+over-replays on the next reconnect, which this section allows; a fast one costs ack
+traffic. The ack is never a flow-control credit: the server runs its `XRANGE` batches
+back to back and never waits for it, and flow control is the bounded per-destination
+buffer (§7.8). In replay mode the cursor advances by these acks only; outside replay
+mode the client applies each live frame's `stream_id` as it arrives (§4.4). Nothing on
+the wire marks a batch end, and nothing needs to: the end of the replay is
+`replay_done` (§4.4), and the prototype's "ack on a count or 20 ms of silence" is
+replaced by the cadence above.
 
 ---
 
@@ -970,7 +1032,7 @@ ports.
 | 7 | B2 | "Pending" on the bounded per-destination buffer has tick granularity: the socket library reports a flush on the next tick, so every push issued within one tick counts as pending even on a healthy socket; the bound must leave room for one tick's worth of fan-out. On loopback the kernel absorbs about 0.5 MB before a blackholed peer backs the writer up, so the backpressure test corks the socket. | Input to the backpressure write-up, A3 item 4 (7.8) |
 | 8 | B7, S6 | The roadmap's `msg` frame omitted `media_size`, `media_mime` and `sha256`, which §6.2 sends; the build followed the roadmap until the gap showed and was fixed across the protocol, the core and the messaging module. | **No**: the design was right. A plan must quote the design's frame, never paraphrase it |
 | 9 | B3 | Two notes for real Redis (B9): "empty `XRANGE`, then flip to live" leaves a window where an append lands after the empty read and before the flip, so one more `XRANGE` after the flip is needed; in one process the flip is in the same microtask drain, so the prototype is safe without it. And deciding "trimmed past the cursor" needs the stream's oldest retained id (`XINFO STREAM`), a fourth operation; `MAXLEN` eviction must be reported the same way. | **Yes**, sync-queue ADR amended (7.3) |
-| 10 | B5, C review | Delivery cursors advance when the push is handed to the socket, not on a client-sent delivered receipt as §3.4 says, because the protocol has no such frame. A push lost to the backpressure timeout therefore still counts as delivered. | **Open**: the replay `ack` is the natural trigger (7.3) |
+| 10 | B5, C review | Delivery cursors advance when the push is handed to the socket, not on a client-sent delivered receipt as §3.4 says, because the protocol has no such frame. A push lost to the backpressure timeout therefore still counts as delivered. | **Item 8, open**, to be decided on the replay `ack{up_to_stream_id}` of ADR `2026-11-02-replay-mode-boundary.md`, not on push-to-socket (7.3, §4.4) |
 | 11 | B4 | The HTTP router is first-match, so a core test's probe route collided with the real page route; the unread count has no sender filter until the sender's own read cursor advances on store, which B5 does. | No |
 | 12 | B6 | Once every client frame type has a handler, the core's unhandled-frame path has no test probe left. | No (prototype note) |
 | 13 | B1 | One client test mixes fake and real time and fails about once in ten full-suite runs under load; the scenarios use larger budgets. | No (prototype note) |
@@ -1004,13 +1066,13 @@ Three things the queue section does not say, found while building B3 and B5.
 - **What marks a batch end.** "Replay in batches of 100, ack per batch" assumes the device
   can tell where a batch ends. It cannot: a batch of 100 and the first 100 of a batch of
   200 look the same, and the last batch is short. The prototype acks after 100 frames or
-  after 20 ms of silence, which works and is not a protocol. Two candidates, **open for
-  the author**: a `batch_end` marker on the last `deliver` of each batch (zero extra
-  frames), or a `replay_done` frame after the last batch (one extra frame, and it also
-  tells the device the stream is drained). Either keeps §4.7's rule that only the ack moves
-  the cursor. Since 2026-11-02 the marker is required, not optional: the cursor rule of
-  §4.4 (live first, then replay) needs it to tell the device when a live frame's entry
-  id may advance the cursor.
+  after 20 ms of silence, which works and is not a protocol. Two candidates were offered,
+  a `batch_end` marker on the last `deliver` of each batch or a `replay_done` frame after
+  the last batch. **Closed 2026-11-02** (ADR `2026-11-02-replay-mode-boundary.md`):
+  nothing marks a batch end, because a batch is the server's read granularity and the ack
+  is not a credit. `deliver` carries a `replay` flag, `replay_done` ends replay mode, the
+  client acks `ack{up_to_stream_id}` on its own cadence, and a push dropped by the
+  backpressure budget re-enters replay for that connection (§4.4, §4.7).
 - **The queue needs four operations, not three.** Deciding "the stream was trimmed past
   this cursor" (§4.2 last paragraph) needs the oldest retained id, which `XRANGE`,
   `XADD` and `XTRIM` cannot give; Redis has it as `XINFO STREAM` (first entry). The
@@ -1097,8 +1159,13 @@ bound counts pushes between "handed to the socket" and "flushed", and the socket
 reports the flush asynchronously, so all pushes issued within one event-loop tick are
 pending at once even on a healthy socket. The bound must be sized as `max(worst-case
 fan-out per tick) + headroom`, not as a small number; the prototype's default is 1 000 with
-a 5 s timeout. A push that times out is dropped and the device catches up through its
-queue, which is the board's rule and held under test.
+a 5 s timeout. A push that times out is dropped. The board's rule, "the device catches
+up through its queue on its own", held under test but is false as written since
+2026-11-02 (ADR `2026-11-02-replay-mode-boundary.md`): the device cannot see a dropped
+push, so the server that dropped it stops queuing live frames for that connection,
+lets the buffer drain, re-runs the `XRANGE` loop alone from the dropped entry until
+empty, sends `replay_done`, and only then resumes live pushes (§4.4). The entry is still
+in the device's stream, as the board says; what changed is who notices.
 
 ### 7.9 §4.2, §4.4: what real Redis showed (B9)
 
@@ -1132,7 +1199,7 @@ the in-memory adapters hid.
   away. **Closed 2026-11-02** (item 10, same ADR), with neither patch: the connection is
   subscribed to live pushes before the replay starts, so there is no flip and no
   window; the client dedups and sorts by `message_id`, and the device cursor advances
-  on replay acks only until the end-of-replay marker, which is now required (§4.4).
+  on replay acks only until `replay_done`, decided the same day (§4.4).
 
 Also observed, no design change: pub/sub delivery and the presence TTL run on Redis's
 clock asynchronously; the server tolerated both unchanged, only the contracts written
@@ -1146,8 +1213,9 @@ for the synchronous in-memory bus and clock needed a settle point and real sleep
 - N6 (A3 item 6b): membership checks at the history page API, the summary read and
   the socket's `msg` frame, and one sentence on transport encryption, or an explicit
   deferral of each. Store replica loss and N2 left this list on 2026-11-02 (§2.7).
-- Batch end on replay: `batch_end` flag or `replay_done` frame (§7.3), **required
-  since 2026-11-02** by the cursor rule of §4.4; and whether the replay `ack` should
-  advance the delivery cursor in place of §3.4's delivered receipt.
+- Item 8, delivery cursor: whether the delivery cursor of §3.4 advances on the replay
+  `ack{up_to_stream_id}` in place of the delivered receipt (§7.3, B5 finding 10). To be
+  decided on that ack (ADR `2026-11-02-replay-mode-boundary.md`), not on
+  push-to-socket. Item 7 (end of replay) left this list on 2026-11-02 (§4.4).
 - Presence debounce versus the client's reconnect: the relation the 5 s debounce, the
   15 s mirror rule and the first backoff must keep (§7.4).

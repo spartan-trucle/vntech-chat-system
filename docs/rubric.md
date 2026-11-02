@@ -1,15 +1,15 @@
 # Rubric run — specification §7 against the design
 
-Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1 to A3.4) after A3 decisions
+Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1 to A3.5) after A3 decisions
 1 to 3 closed service discovery, reply quoting and store replica loss (with the N2 half
-of item 6), and the live-first ADR closed board items 10 and 11 (replay-to-live
-handoff, per-stream append order); no row was re-scored, only the gaps behind rows 1,
-3, 7 and 8 and the delivery lines of row 6 changed. The scores are the author's to
-re-run.
+of item 6), the live-first ADR closed board items 10 and 11 (replay-to-live handoff,
+per-stream append order) and the replay-mode ADR closed item 7 (end of replay); no row
+was re-scored, only the gaps behind rows 1, 3, 7 and 8 and the delivery lines of row 6
+changed. The scores are the author's to re-run.
 Run against [`design.md`](design.md),
 [`estimation.md`](estimation.md), [`tradeoffs.md`](tradeoffs.md),
 [`diagrams/flows.md`](diagrams/flows.md), [`diagrams/high-level.html`](diagrams/high-level.html),
-the eight ADRs in `.memory/decisions/` and the discussion page. Each row restates the
+the nine ADRs in `.memory/decisions/` and the discussion page. Each row restates the
 spec's pass condition as a checklist, cites where each item is, and scores **pass** or
 **fail**. A fail names the concrete gap; the gaps are collected at the end as the input
 to epic A3.
@@ -138,8 +138,11 @@ fan-out has a stated threshold.*
   24 h (§1.4, §2.2); fan-out retried idempotently on a fixed ID, and the queue append
   by a best-effort tail read on its retry path, `XADD … *` with the message id in the
   entry (§4.2, decided 2026-11-02); replay from the device cursor with the socket
-  subscribed to live pushes first, cursor advanced only on ack and, until the
-  end-of-replay marker, on replay acks only (§4.4, §4.7).
+  subscribed to live pushes first, `deliver.replay` telling replay frames from live
+  ones, cursor advanced only on `ack{up_to_stream_id}`, which persists the cursor and is
+  never a credit, and in replay mode (from `hello` or a dropped push until
+  `replay_done`) on replay acks only; a push dropped by the backpressure budget makes
+  the server re-replay that connection alone (§4.4, §4.7, §7.8, decided 2026-11-02).
 - Client-side dedup: by `message_id` when a replay overlaps live traffic or a store
   page (§4.4), which since 2026-11-02 is the normal case rather than the edge case,
   because live pushes and the replay share the socket and the client sorts its store
@@ -240,5 +243,14 @@ through row 6's delivery lines and §7.9's open notes. **Closed 2026-11-02** by 
 `2026-11-02-live-first-replay-xadd-auto-id.md`: live first, then replay, no flip, client
 dedups and sorts by `message_id`, cursor on replay acks only until the end-of-replay
 marker; `XADD … *` with the message id in the entry and a tail read on the retry path.
-Written into design §4.2, §4.4, §7.9, tradeoffs 5.5.2a and 5.5.2b, flow 2 (A3.4). Item
-7 (batch end, design §7.3) is required by the cursor rule and stays open on its form.
+Written into design §4.2, §4.4, §7.9, tradeoffs 5.5.2a and 5.5.2b, flow 2 (A3.4).
+
+Board item 7 (end of replay, design §7.3, found in B3), likewise never a row of this
+table, **closed 2026-11-02** by ADR `2026-11-02-replay-mode-boundary.md`: no `batch_end`;
+`deliver` gains a boolean `replay`, one new frame `replay_done`, `ack{up_to_stream_id}`
+persists the cursor on the client's cadence (100 frames or 500 ms, the author's numbers to
+confirm) and is never a credit; replay mode runs from `hello` or from a dropped push to
+`replay_done`, and a dropped push makes the server re-replay that connection alone.
+Written into design §4.4, §4.7, §7.3, §7.8, tradeoffs 5.5.2c and 5.8.3, flows 2 and 3
+(A3.5). Item 8 (delivery cursor, B5 finding 10) stays open and is to be decided on this
+ack, not on push-to-socket.
