@@ -3,8 +3,8 @@ import { runScenario, type ScenarioResult } from './scenario.js';
 import { scenarios } from './run.js';
 
 /**
- * The six scenarios of the runtime ADR as part of `npm test`: each on fake time with the
- * design's numbers, and S1 and S5 once more on real timers with scaled intervals (roadmap
+ * The seven scenarios as part of `npm test`: each on fake time with the design's numbers,
+ * and S1, S5 and S7 once more on real timers with scaled intervals (roadmap
  * §5 risk: fake timers hide a real race). Nothing is printed unless a scenario fails; then
  * its hop trace is, so the failure can be read against docs/prototype/index.html.
  */
