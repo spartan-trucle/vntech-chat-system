@@ -10,6 +10,12 @@
  * sends replay_done, and only then pushes live again; an ack lands while the re-replay runs.
  * After every frame the phone receives, its cursor has never passed an entry it does not
  * hold (oracle: the stream read through the port) and its store holds every message once.
+ *
+ * B11 (delivered-receipt ADR, design §3.4): *delivered* is the phone's word. After every
+ * frame, Khanh's delivery cursor on the server (`delivery_cursors[c1][B1]`) is never above
+ * what the phone said in a `delivered` frame, and from the drop on it stays below the dropped
+ * message until the re-replay has stored it on the phone and the phone's `delivered` has left
+ * (coalesced: one per conversation per 2 s). Only then does the cursor pass the dropped id.
  */
 
 import { DEVICES } from '../../src/fixtures.js';
@@ -19,7 +25,7 @@ import type { ServerFrame } from '../../src/protocol.js';
 import { Trace } from '../../src/trace.js';
 import type { ScriptedClient } from '../harness/ScriptedClient.js';
 import { defineScenario } from './scenario.js';
-import { corkSocket, delivers, holdXrange, replayDones, send, sidOf } from './helpers.js';
+import { corkSocket, delivers, holdXrange, replayDones, seconds, send, sidOf } from './helpers.js';
 
 const BEHIND = 150;
 /** Live pushes one socket may have pending before the budget drops one (the runner's default is 1000). */
@@ -37,6 +43,10 @@ export const s7 = defineScenario({
   },
   async run(env) {
     const queue = env.server.ctx.ports.syncQueue;
+    const cursors = env.server.ctx.ports.cursors;
+    const deliveryCursor = async (): Promise<MessageId | undefined> => (await cursors.deliveryCursors('c1')).get('B1');
+    /** The message the budget drops, once the scenario gets there; the delivery-cursor oracle watches it from then on. */
+    let droppedId: MessageId | null = null;
 
     // ---- the oracle, run after every frame the phone receives ----
     const violations: string[] = [];
@@ -52,6 +62,18 @@ export const s7 = defineScenario({
         if (compareIds(rendered[i - 1]!.message_id, rendered[i]!.message_id) >= 0) violations.push(`frame ${n}: rendered() not strictly in message order`);
       }
       if (c.delivered.length !== stored.size) violations.push(`frame ${n}: ${c.delivered.length} delivered but ${stored.size} stored`);
+      // B11: the server's delivery cursor is the phone's word and never more (the cursors port is in
+      // memory in every form of this scenario, so the read lands before any later frame or receipt).
+      const said = c.deliveredUpTo.get('c1');
+      const dropped = droppedId;
+      checks.push((async () => {
+        const server = await deliveryCursor();
+        if (server === undefined) return;
+        if (said === undefined || compareIds(server, said) > 0) violations.push(`frame ${n} (${frame.t}): delivery cursor #${server} above what the phone said delivered (${said === undefined ? 'nothing' : `#${said}`})`);
+        if (dropped === null) return;
+        const phoneSaidSo = stored.has(dropped) && said !== undefined && compareIds(said, dropped) >= 0;
+        if (!phoneSaidSo && compareIds(server, dropped) >= 0) violations.push(`frame ${n} (${frame.t}): delivery cursor #${server} reached the dropped #${dropped} before the phone stored it and said delivered`);
+      })());
       if (cursor === null) return;
       // Every entry at or below the cursor must already be in the store (the stream only grows above it).
       checks.push((async () => {
@@ -130,6 +152,7 @@ export const s7 = defineScenario({
     for (let i = 1; i <= MAX_PENDING + 1; i += 1) burst.push(await send(env, truc, 'c1', `burst ${i}`));
     all.push(...burst);
     const dropped = burst[MAX_PENDING]!;
+    droppedId = dropped;
     await env.until(() => env.rows('lost').some((r) => r.startsWith(`#${dropped} → Khanh·phone: buffer full`)), 'the drop traced');
     env.assertEqual(env.mode('B1'), 'replay', 'the server re-entered replay mode for the phone');
     env.assert(env.server.ctx.connections.byDevice('B1')!.pushes.liveSuspended, 'live pushes to the phone are suspended');
@@ -161,18 +184,36 @@ export const s7 = defineScenario({
     env.assertEqual(khanh.cursor, sidOf(khanh, afterDrop), 'the ack at replay_done moved the cursor past the re-replayed entries');
     env.assertEqual(khanh.reconnects, 0, 'the dropped push was redelivered without a reconnect');
 
-    env.step('Live again: the next message is a direct push and its stream id is the cursor at once.');
+    const window = env.numbers.deliveredWindowMs;
+    env.step(`Delivered is the phone's word (B11): the dropped push never moved Khanh's delivery cursor. The re-replay stored the message on the phone; its delivered{c1, ≤ #} is coalesced into the phone's ${seconds(window)} window, and the server's cursor passes the dropped entry only when that frame arrives.`);
+    env.assert(khanh.store.has(dropped), 'the phone holds the dropped message');
+    if (!env.realTime) {
+      // Fake time: the window cannot have ended yet, so the cursor is still below the dropped entry.
+      const before = await deliveryCursor();
+      env.assert(before === undefined || compareIds(before, dropped) < 0, `before the receipt: the delivery cursor (${before === undefined ? 'none' : `#${before}`}) is below the dropped #${dropped}`);
+      env.assert(compareIds(khanh.deliveredUpTo.get('c1')!, dropped) < 0, 'the phone has not said delivered for the dropped message yet (inside the window)');
+    }
+    await env.advance(window);
+    await env.until(() => env.rows('receipt').includes(`delivered c1 ≤ #${afterDrop} by Khanh·phone`), 'the delivered frame for the re-replayed messages arrived at the server');
+    env.assertEqual(khanh.deliveredUpTo.get('c1'), afterDrop, 'the phone said delivered up to the highest id it stored');
+    const afterReceipt = await deliveryCursor();
+    env.assert(afterReceipt !== undefined && compareIds(afterReceipt, dropped) >= 0, `after the receipt: the delivery cursor (#${afterReceipt}) is at or above the dropped #${dropped}`);
+
+    env.step('Live again: the next message is a direct push and its stream id is the cursor at once; the delivered for it goes out with the next window.');
     const after = await send(env, truc, 'c1', 'Live again');
     all.push(after);
     await env.until(() => khanh.store.has(after), 'live deliver at Khanh');
     env.assertEqual(delivers(khanh).find((d) => d.message.message_id === after)!.replay, false, 'a live push again');
     env.assertEqual(khanh.cursor, sidOf(khanh, after), 'applied to the cursor at once');
+    await env.advance(window);
+    await env.until(() => env.rows('receipt').includes(`delivered c1 ≤ #${after} by Khanh·phone`), 'the delivered for the live message arrived');
+    env.assertEqual(await deliveryCursor(), after, "Khanh's delivery cursor is at the last message: delivered means stored, in live mode as in replay mode");
 
     for (const c of checks) await c;
-    env.assertEqual(violations, [], 'after every frame: the cursor never passed an undelivered entry and the store held each message once');
+    env.assertEqual(violations, [], 'after every frame: the cursor never passed an undelivered entry, the store held each message once, and the delivery cursor never ran ahead of the phone');
     env.assertEqual(khanh.rendered().map((m) => m.message_id), all, `every one of the ${all.length} messages stored exactly once, in message order`);
     env.assertEqual(khanh.delivered.length, all.length, 'no message rendered twice');
     env.assert(env.traceRows().length < 2000, 'trace under the 2000-row cap, so its head is intact');
-    env.step(`Checked after each of the ${frames} frames: cursor never past an undelivered entry, store exact. ${all.length} messages, ${khanh.duplicatesDropped} duplicate frames dropped, one dropped push redelivered, no reconnect.`);
+    env.step(`Checked after each of the ${frames} frames: cursor never past an undelivered entry, store exact, delivery cursor never above what the phone said. ${all.length} messages, ${khanh.duplicatesDropped} duplicate frames dropped, one dropped push redelivered and then reported delivered by the phone, no reconnect.`);
   },
 });
