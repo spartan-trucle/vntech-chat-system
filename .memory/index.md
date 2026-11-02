@@ -4,6 +4,7 @@
 - [2026-11-01] Media: server never processes bytes, client compresses, regional buckets, CDN for groups → `.memory/decisions/2026-11-01-media-no-server-processing.md`
 - [2026-11-01] Presence by subscription, 10 s detection, bounded propagation, decoupled lease → `.memory/decisions/2026-11-01-presence-subscription.md` (amended after the prototype: `last_seen` is the drop time, lease only while someone is online; open: debounce versus the client's reconnect)
 - [2026-11-01] Sync queue on Redis Streams, 24 h window; cursor ownership → `.memory/decisions/2026-11-01-sync-queue-redis-streams.md` (amended after the prototype: four operations, trim-boundary slow-path rule, replay beside the frame chain; open: batch-end marker)
+- [2026-11-02] Store replica loss: writes LOCAL_QUORUM with one retry at ONE; dedup at two layers (QUORUM index read that fails open, client dedup by client_msg_id); N2 statement → `.memory/decisions/2026-11-02-store-quorum-fallback-one.md`
 - [2026-11-02] Reply quoting resolved by ID, no excerpt copied; the page API returns referenced parents in one batch → `.memory/decisions/2026-11-02-reply-quote-by-id.md`
 - [2026-11-02] No service registry: load balancer with app-level health check picks the chat server; the 5 min lease is the only cleanup on node loss → `.memory/decisions/2026-11-02-no-service-registry.md`
 - [2026-11-01] Prototype runtime for the chat server: Node.js + TypeScript → `.memory/decisions/2026-11-01-prototype-runtime-nodejs.md` (conditions met: S1–S6 pass, 258 tests)
