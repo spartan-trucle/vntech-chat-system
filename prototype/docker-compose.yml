@@ -1,0 +1,13 @@
+# B9 · real Redis for `npm run test:redis`. Host port 6399 on purpose (not 6379), no
+# persistence: the tests create their own prefixed keys and delete them afterwards.
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6399:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 30

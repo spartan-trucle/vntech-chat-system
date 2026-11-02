@@ -10,7 +10,10 @@
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
     "scenarios": "tsx test/scenarios/run.ts",
-    "dev": "tsx src/main.ts"
+    "dev": "tsx src/main.ts",
+    "test:redis": "REDIS_URL=redis://127.0.0.1:6399 vitest run test/redis",
+    "redis:up": "docker compose up -d --wait",
+    "redis:down": "docker compose down"
   },
   "license": "UNLICENSED",
   "devDependencies": {
@@ -21,6 +24,7 @@
     "vitest": "^5.0.5"
   },
   "dependencies": {
+    "ioredis": "^6.0.0",
     "ws": "^8.22.1"
   }
 }
