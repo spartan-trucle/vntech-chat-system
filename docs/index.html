@@ -577,12 +577,12 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   <div class="cols">
     <div>
       <h4>The problem</h4>
-      <p>Detection looked expensive because an early estimate tied a Redis lease, renewed every 30 s for 15 million sockets, to the 10 s target: 500 k writes/s. But detection is local to the chat server, and the lease exists only for a dead server, which service discovery already handles. The real cost of presence is <em>propagation</em>: a user with 200 contacts and 50 online produces 50 pushes per transition, and mobile radios transition constantly.</p>
+      <p>Detection looked expensive because an early estimate tied a Redis lease, renewed every 30 s for 15 million sockets, to the 10 s target: 500 k writes/s. But detection is local to the chat server, and the lease exists only for a dead server, and it is the only cleanup a dead server gets (decided 2026-11-02, no registry). The real cost of presence is <em>propagation</em>: a user with 200 contacts and 50 online produces 50 pushes per transition, and mobile radios transition constantly.</p>
       <h4>Decision</h4>
       <div class="decision">
         <p><strong>Subscription model.</strong> A device receives presence only for users on its screen: the open chat, the visible rows of the list. Leaving the screen unsubscribes.</p>
         <p><strong>Detected within 10 s; visible to watchers within 15 s normally, 30 s worst case.</strong> A drop-and-reconnect under 5 s is never shown as offline.</p>
-        <p><strong>Lease decoupled from detection:</strong> renewed every 2 min with a 5 min TTL, a safety net behind service discovery's mark-all-offline on node loss.</p>
+        <p><strong>Lease decoupled from detection:</strong> renewed every 2 min with a 5 min TTL. Since 2026-11-02 it is the only cleanup on node loss: nobody runs a mark-all-offline job, routing heals from the client's reconnect within the 15 s mirror rule, and a device that lost its server and its network together shows online for up to 5 min, accepted (ADR <code>2026-11-02-no-service-registry.md</code>).</p>
         <p><strong>Cross-server fan-out</strong> through a pub/sub channel per watched user, joined only by servers that currently have a watcher.</p>
       </div>
       <h4>Rejected</h4>
@@ -742,12 +742,12 @@ footer{padding:28px 0 48px;color:var(--ink-2);font-size:.9rem}
   </div>
   <ol class="asks">
     <li><strong>Production runtime.</strong> Component 8. Re-decide when there is a product; a second prototype in Kotlin or BEAM is the honest way to compare connection handling.</li>
-    <li><strong>Service discovery.</strong> Components 1 and 6 depend on it (least-loaded server, mark-all-offline on node loss). The book says ZooKeeper; today that reads as etcd, Consul, or the orchestrator.</li>
+    <li><strong>Service discovery: decided 2026-11-02, no registry.</strong> <span class="state decided">decided</span> A plain load balancer with an application-level health check (socket accepted, <code>hello</code> answered) and random assignment picks the chat server; "least-loaded" is dropped. Nobody runs mark-all-offline: the client's reconnect overwrites the stale route within the 15 s mirror rule and the 5 min presence lease is the only cleanup. ADR <code>.memory/decisions/2026-11-02-no-service-registry.md</code>; written into <a href="design.md">design.md</a> §1.4, §1.5, §5.5, <a href="tradeoffs.md">tradeoffs.md</a> 5.2.2 and 5.8.1, <a href="diagrams/flows.md">flows</a> 2 and 5.</li>
     <li><strong>Batch end on replay, and delivered receipts.</strong> Component 4. Nothing marks where a replay batch ends (<code>batch_end</code> flag or <code>replay_done</code> frame), and the replay <code>ack</code> could replace §3.4's delivered receipt. From the prototype, <a href="design.md">design.md §7.3</a>.</li>
     <li><strong>Presence debounce versus the client's reconnect.</strong> Components 1 and 6. The 5 s debounce, the 15 s mirror rule and the first backoff were sized independently and a half-open drop shows a flap; the relation they should keep is in <a href="design.md">design.md §7.4</a>.</li>
     <li><strong>The 10 % media rate.</strong> Component 7. The remaining lever on the dominant cost; halving it halves media.</li>
     <li><strong>Discord-style communities.</strong> Groups of 10 k+ change fan-out (on read), presence (a member list is a "who is online" screen), and the message store partitioning. A separate design pass, spec §8.3.</li>
-    <li><strong>The A3 decision list</strong> lives in <a href="rubric.md">rubric.md</a>: the spec §7 run scores six rows pass and three fail, and its last table names the six decisions that close the fails (service discovery, reply quoting, store-primary failure, backpressure in <code>design.md</code>, the five paging metrics, N2 and N6). <a href="tradeoffs.md">tradeoffs.md</a> lists the same open bullets at its top. The prototype plans are in <code>.planning/plans/</code> and the code under <code>prototype/</code>.</li>
+    <li><strong>The A3 decision list</strong> lives in <a href="rubric.md">rubric.md</a>: the spec §7 run scores six rows pass and three fail, and its last table names the six decisions that close the fails (service discovery, closed 2026-11-02; reply quoting, store-primary failure, backpressure in <code>design.md</code>, the five paging metrics, N2 and N6 still open). <a href="tradeoffs.md">tradeoffs.md</a> lists the same open bullets at its top. The prototype plans are in <code>.planning/plans/</code> and the code under <code>prototype/</code>.</li>
   </ol>
 </section>
 
