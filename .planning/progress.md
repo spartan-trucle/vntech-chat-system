@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-02, report round 15 (B9 started on the author's ask; A3 service discovery decided in debate, ADR pending)
+Last updated: 2026-11-02, report round 16 (service discovery ADR on main 6858647; lane A writing it into design, tradeoffs, flows as A3.1; B9 in flight)
 
 ## Epics
 
@@ -12,7 +12,7 @@ Last updated: 2026-11-02, report round 15 (B9 started on the author's ask; A3 se
 | A1 tradeoffs.md | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
 | A2 sequence diagrams | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
 | A4 rubric run | A | 1 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
-| A3 open decisions | hub + author | 2 | decision 1 (service discovery) decided 2026-11-02, ADR and design text pending; 8 more open | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
+| A3 open decisions | hub + author | 2 | decision 1 ADR on main (6858647); A3.1 design text in lane A; 8 more open | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
 | B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
 | B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
@@ -65,7 +65,7 @@ moves a rubric row.
 
 | # | Decision needed | Closes | Status |
 |---|---|---|---|
-| 1 | Service discovery: what answers `GET /chat-servers` (least-loaded healthy node) and what watches liveness and runs `mark-all-offline(server_id)`; etcd / Consul / orchestrator | §5.2.2, §5.8.1 | open |
+| 1 | Service discovery: what answers `GET /chat-servers` (least-loaded healthy node) and what watches liveness and runs `mark-all-offline(server_id)`; etcd / Consul / orchestrator | §5.2.2, §5.8.1 | **decided 2026-11-02**: no registry; load balancer with app-level health check, random assignment; lease is the only cleanup. ADR `2026-11-02-no-service-registry.md`; design text in A3.1 (lane A) |
 | 2 | Reply quoting: excerpt denormalized into the reply row vs resolved by ID on render; what shows when the parent is deleted | §5.3.5, F10 | open |
 | 3 | Message-store primary failure: what the sender sees, how long the ack path waits, what the outbox does, bound on loss, recovery steps | §5.8.2, N2 | open |
 | 4 | Backpressure: move the board's bounded per-destination buffer + drop-to-stream rule into `design.md` with its budget (text, not a new decision) | §5.8.3 | open |
