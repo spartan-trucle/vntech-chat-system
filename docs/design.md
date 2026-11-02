@@ -583,11 +583,18 @@ Operations, and nothing else:
 
 The queue is written on the fan-out path, after the message store write and in the same
 retry loop, so a message that is stored is eventually in every recipient device's stream.
-`XADD` with a client-chosen ID derived from the Snowflake makes retries idempotent.
-With real Redis that holds for a retry of the same id only: the stream is append-only
-in id order and refuses a lower id, so appends to one device's stream must be issued in
-message-id order, and `MAXLEN ~` is a floor with node granularity, not an exact cap
-(prototype, §7.9, open).
+**Stream ids are Redis-assigned (`XADD … *`), as the block above shows, and the
+`message_id` lives in the entry body** (decided 2026-11-02, ADR
+`2026-11-02-live-first-replay-xadd-auto-id.md`). Appends to one device's stream need
+no ordering: a late append lands behind the top entry and is replayed after the
+cursor, where an explicit lower id would be refused by Redis. The retry stays
+idempotent on the retry path only: when an `XADD` times out, the appender reads the
+tail of the stream (`XREVRANGE sq:{device} + - COUNT 100`) and skips the append if an
+entry with that `message_id` is present. The normal path pays nothing. The check is
+best effort, since the timed-out `XADD` can still land after the read, so a duplicate
+entry remains possible and the client's dedup by `message_id` (§4.4) is the guarantee;
+a duplicate costs one `MAXLEN` slot and one extra body join on replay. `MAXLEN ~` is a
+floor with node granularity, not an exact cap (prototype, §7.9).
 
 **Write order is an invariant: message store first, sender ack second, queue append
 third.** Nothing is ever in Redis that is not already in Cassandra, and the stream holds
@@ -640,10 +647,12 @@ device                         API servers              chat server          sto
   |  render list                   |                                             |
   |-- WS connect + hello{cursor} ------------------------>|                      |
   |                                                       |-- route register --> Redis
+  |                                                       |-- subscribe the socket to live pushes, first
   |                                                       |-- replay from cursor -> sync_queue + messages
-  |<-- missed messages, in order (batches of 100) --------|                      |
+  |<-- missed messages (batches of 100), live pushes interleaved --|             |
   |-- ack per batch (advance cursor) -------------------->|                      |
-  |<-- live traffic begins ------------------------------|                      |
+  |<-- end-of-replay marker (§7.3, required) ------------|                      |
+  |<-- live traffic, each frame with its entry id --------|                      |
 ```
 
 The list is usable after step 2. Open chats are complete after the replay. If the user
@@ -655,10 +664,34 @@ queue; the queue replay later dedups by message ID on the client.
 (prototype, §7.2). The server must keep handling the device's frames while the replay
 waits for each batch's ack, because the ack arrives on the same socket; a server that
 processes one connection's frames strictly in order and lets `hello` block until the
-replay is done deadlocks on the first batch. The connection stays in a `replay` phase
-until the drain ends, so the fan-out of §4.2 does not push to it directly and a message
-sent meanwhile reaches it through the queue, once. How the device knows a batch has
-ended is not defined here; see §7.3 (open).
+replay is done deadlocks on the first batch.
+
+**Live first, then replay** (decided 2026-11-02, ADR
+`2026-11-02-live-first-replay-xadd-auto-id.md`). On `hello{cursor}` the chat server
+subscribes the connection to live pushes *before* it starts the replay loop. There is
+no `replay` phase in the connection state machine and no flip: the replay runs
+`XRANGE (cursor + COUNT 100` until an empty batch while live pushes flow on the same
+socket, so the window B9 found between the last empty `XRANGE` and the flip (§7.9)
+does not exist. Three rules follow:
+
+- **The client dedups by `message_id`.** A message appended during the replay reaches
+  the device twice, once as a live push and once when the replay loop reaches its
+  entry; the client's local store keys messages by `message_id`, so the second copy is
+  a no-op write.
+- **The client sorts by `message_id`.** Frames on the socket are not in `message_id`
+  order during the replay. The client renders from its store sorted by `message_id`,
+  never from socket arrival order. That is the order the message store clusters by
+  (§2.2) and the history page returns, so replay, live and paging agree. It is as good
+  as the clocks of the Snowflake generators, which is the only system-wide order the
+  design commits to; the client has no better one.
+- **Cursor rule.** The device cursor advances on replay batch acks only, until the
+  server marks the end of the replay. A live frame received before that marker is
+  stored, but its queue entry id is not applied to the cursor, because entries between
+  the replay position and that live entry have not been delivered yet. After the
+  marker, each live frame carries its queue entry id (`stream_id` on the `deliver`
+  frame, as flows 1, 3 and 6 draw it) and the device advances the cursor on it as
+  today (§4.7). The end-of-replay marker is §7.3's open item (`batch_end` flag or
+  `replay_done` frame); this decision makes it **required**, whichever form it takes.
 
 ### 4.5 Bounds
 
@@ -943,9 +976,9 @@ ports.
 | 13 | B1 | One client test mixes fake and real time and fails about once in ten full-suite runs under load; the scenarios use larger budgets. | No (prototype note) |
 | 14 | A4 | N2 (availability) and N6 (security) were neither addressed nor deferred; spec §7 row 3 says seven flows where §4.2 has nine. | N2 closed 2026-11-02 (§2.7, ADR `2026-11-02-store-quorum-fallback-one.md`); N6 stays open as A3 item 6b in `rubric.md`; the second is a spec typo |
 | 15 | B, orchestration | Agent worktrees were cut from `origin/main`, not the lane branch; every subagent brief had to open with a fast-forward onto the lane branch. | No (process note) |
-| 16 | B9, Redis | Redis refuses an `XADD` whose id is at or below the stream's top entry. The in-memory queue sorted on insert, so it hid that appends to one device's stream must be issued in message-id order; today only the equal await depth of concurrent handlers keeps them ordered. A retry of the same id is still the idempotent case of §4.2. | **Open**, §4.2 (7.9) |
+| 16 | B9, Redis | Redis refuses an `XADD` whose id is at or below the stream's top entry. The in-memory queue sorted on insert, so it hid that appends to one device's stream must be issued in message-id order; today only the equal await depth of concurrent handlers keeps them ordered. A retry of the same id is still the idempotent case of §4.2. | **Closed 2026-11-02**, §4.2: `XADD … *`, message id in the entry, tail read on the retry path (7.9, ADR `2026-11-02-live-first-replay-xadd-auto-id.md`) |
 | 17 | B9, Redis | `MAXLEN ~` trims whole radix-tree nodes: the cap is a floor with node-level granularity (about 100 entries), not the exact length the in-memory adapter enforced. §4.5's "caps the pathological case" is approximate. | Noted in §4.2 and the sync-queue ADR (7.9) |
-| 18 | B9, Redis | The replay-to-live handoff has a real window under I/O: a message whose `XADD` lands after the replay's last empty `XRANGE` and whose fan-out runs before the connection flips to `live` is neither replayed nor pushed until the next reconnect. The in-memory "same microtask drain" argument in the sync module is false once `XRANGE` is a round trip; the driver's reply FIFO is what usually saves it. Kept as an expected-failure test with its trace. | **Open**, §4.4 (7.9) |
+| 18 | B9, Redis | The replay-to-live handoff has a real window under I/O: a message whose `XADD` lands after the replay's last empty `XRANGE` and whose fan-out runs before the connection flips to `live` is neither replayed nor pushed until the next reconnect. The in-memory "same microtask drain" argument in the sync module is false once `XRANGE` is a round trip; the driver's reply FIFO is what usually saves it. Kept as an expected-failure test with its trace. | **Closed 2026-11-02**, §4.4: live first, then replay, no flip, client dedups and sorts by message id (7.9, same ADR) |
 
 ### 7.2 §4.4: the replay runs beside the connection's frame handling
 
@@ -957,9 +990,12 @@ frames strictly in order and the hello handler does not return until the replay 
 the ack can never be processed and the replay never ends. The prototype hit exactly this
 and fixed it in the core: the handshake returns as soon as `hello_ack` is sent, the replay
 runs as a detached task for that connection, and frames that arrive meanwhile (acks, the
-outbox flush of §1.4, receipts) are handled normally. The connection stays in the
-`replay` phase, so the fan-out of §4.2 does not push to it directly and a message sent
-during the replay reaches it through the queue, once. Written into §4.4.
+outbox flush of §1.4, receipts) are handled normally. The prototype kept the connection
+in a `replay` phase, so the fan-out of §4.2 did not push to it directly and a message
+sent during the replay reached it through the queue, once. The detached replay was
+written into §4.4; the `replay` phase was removed on 2026-11-02 by the live-first
+decision (§4.4, §7.9), which subscribes the connection to live pushes before the replay
+starts and leaves the dedup to the client.
 
 ### 7.3 §4.2, §4.7: a batch end, the queue's fourth operation, and delivered receipts
 
@@ -972,7 +1008,9 @@ Three things the queue section does not say, found while building B3 and B5.
   the author**: a `batch_end` marker on the last `deliver` of each batch (zero extra
   frames), or a `replay_done` frame after the last batch (one extra frame, and it also
   tells the device the stream is drained). Either keeps §4.7's rule that only the ack moves
-  the cursor.
+  the cursor. Since 2026-11-02 the marker is required, not optional: the cursor rule of
+  §4.4 (live first, then replay) needs it to tell the device when a live frame's entry
+  id may advance the cursor.
 - **The queue needs four operations, not three.** Deciding "the stream was trimmed past
   this cursor" (§4.2 last paragraph) needs the oldest retained id, which `XRANGE`,
   `XADD` and `XTRIM` cannot give; Redis has it as `XINFO STREAM` (first entry). The
@@ -1075,10 +1113,12 @@ the in-memory adapters hid.
   "client-chosen ID derived from the Snowflake makes retries idempotent" holds for a
   retry of the same id and nothing else. Two concurrent sends to the same recipient can
   reach the `XADD` for that device's stream out of id order unless something serialises
-  them. **Open for the author**, progress item 11: serialise appends per device stream
-  (one in-flight append per stream, the rest queued in id order), or let Redis mint the
-  stream id (`XADD … *`) and keep the message id only in the entry, which drops the
-  idempotent-retry property and needs the dedup elsewhere.
+  them. **Closed 2026-11-02** (item 11, ADR
+  `2026-11-02-live-first-replay-xadd-auto-id.md`): Redis mints the stream id
+  (`XADD … *`) and the message id lives in the entry only; a late append is replayed,
+  not refused. The idempotent retry survives on the retry path as a tail read that
+  skips a present message id, best effort, with the client's dedup by `message_id` as
+  the guarantee (§4.2).
 - **`MAXLEN ~` is a floor (row 17).** The cap evicts whole radix nodes once one fills;
   the stream can hold up to about a hundred entries more than the cap. The design's
   "overflow takes the slow path" (sync-queue ADR) still holds; the boundary is fuzzy by
@@ -1089,10 +1129,10 @@ the in-memory adapters hid.
   gap between the empty read and the flip; a message appended in that gap is skipped by
   the replay (the range was empty) and by the push (the phase was still `replay`). It
   is not lost, it is in the stream and arrives on the next reconnect, which may be hours
-  away. **Open for the author**, progress item 10: one more `XRANGE` after the flip to
-  `live` (the replay catches what landed in the gap, the client dedups any overlap with
-  a live push), or buffer live pushes for a connection in `replay` and release them
-  deduplicated at the flip. Either must be drawn into §4.4.
+  away. **Closed 2026-11-02** (item 10, same ADR), with neither patch: the connection is
+  subscribed to live pushes before the replay starts, so there is no flip and no
+  window; the client dedups and sorts by `message_id`, and the device cursor advances
+  on replay acks only until the end-of-replay marker, which is now required (§4.4).
 
 Also observed, no design change: pub/sub delivery and the presence TTL run on Redis's
 clock asynchronously; the server tolerated both unchanged, only the contracts written
@@ -1106,13 +1146,8 @@ for the synchronous in-memory bus and clock needed a settle point and real sleep
 - N6 (A3 item 6b): membership checks at the history page API, the summary read and
   the socket's `msg` frame, and one sentence on transport encryption, or an explicit
   deferral of each. Store replica loss and N2 left this list on 2026-11-02 (§2.7).
-- Batch end on replay: `batch_end` flag or `replay_done` frame (§7.3); and whether the
-  replay `ack` should advance the delivery cursor in place of §3.4's delivered receipt.
+- Batch end on replay: `batch_end` flag or `replay_done` frame (§7.3), **required
+  since 2026-11-02** by the cursor rule of §4.4; and whether the replay `ack` should
+  advance the delivery cursor in place of §3.4's delivered receipt.
 - Presence debounce versus the client's reconnect: the relation the 5 s debounce, the
   15 s mirror rule and the first backoff must keep (§7.4).
-- Replay-to-live handoff (§7.9, B9): close the window between the last empty `XRANGE`
-  and the flip to `live`, either one more `XRANGE` after the flip or buffered live
-  pushes released deduplicated; draw the choice into §4.4.
-- Per-stream append ordering (§7.9, B9): Redis Streams reject out-of-order ids, so
-  either serialise appends per device stream or mint stream ids from Redis and keep the
-  message id in the entry only; state the choice in §4.2.

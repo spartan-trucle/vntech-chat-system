@@ -1,13 +1,15 @@
 # Rubric run — specification §7 against the design
 
-Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1, A3.2, A3.3) after A3 decisions
+Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1 to A3.4) after A3 decisions
 1 to 3 closed service discovery, reply quoting and store replica loss (with the N2 half
-of item 6); no row was re-scored, only the gaps behind rows 1, 3, 7 and 8 changed. The
-scores are the author's to re-run.
+of item 6), and the live-first ADR closed board items 10 and 11 (replay-to-live
+handoff, per-stream append order); no row was re-scored, only the gaps behind rows 1,
+3, 7 and 8 and the delivery lines of row 6 changed. The scores are the author's to
+re-run.
 Run against [`design.md`](design.md),
 [`estimation.md`](estimation.md), [`tradeoffs.md`](tradeoffs.md),
 [`diagrams/flows.md`](diagrams/flows.md), [`diagrams/high-level.html`](diagrams/high-level.html),
-the seven ADRs in `.memory/decisions/` and the discussion page. Each row restates the
+the eight ADRs in `.memory/decisions/` and the discussion page. Each row restates the
 spec's pass condition as a checklist, cites where each item is, and scores **pass** or
 **fail**. A fail names the concrete gap; the gaps are collected at the end as the input
 to epic A3.
@@ -133,10 +135,15 @@ blob authorization are enforced at a named hop.*
 fan-out has a stated threshold.*
 
 - At-least-once: outbox with `client_msg_id` flushed on reconnect, server dedup for
-  24 h (§1.4, §2.2); fan-out and queue append retried idempotently on a fixed ID
-  (§4.2); replay from the device cursor, cursor advanced only on ack (§4.4, §4.7).
+  24 h (§1.4, §2.2); fan-out retried idempotently on a fixed ID, and the queue append
+  by a best-effort tail read on its retry path, `XADD … *` with the message id in the
+  entry (§4.2, decided 2026-11-02); replay from the device cursor with the socket
+  subscribed to live pushes first, cursor advanced only on ack and, until the
+  end-of-replay marker, on replay acks only (§4.4, §4.7).
 - Client-side dedup: by `message_id` when a replay overlaps live traffic or a store
-  page (§4.4), and since 2026-11-02 by `(sender_id, client_msg_id)` on the `deliver`
+  page (§4.4), which since 2026-11-02 is the normal case rather than the edge case,
+  because live pushes and the replay share the socket and the client sorts its store
+  by `message_id`; and since 2026-11-02 by `(sender_id, client_msg_id)` on the `deliver`
   frame, the second layer behind a dedup read that failed open in a degraded range
   (§1.4, §2.7); `tradeoffs.md` 5.5.3 collects the whole path.
 - Threshold: fan-out on write up to the 100-member product ceiling; fan-out on read is
@@ -226,3 +233,12 @@ Each item names the spec bullet it closes and the rubric row it moves.
 
 Item 6 is new from this run; the roadmap's A3 text lists items 1 to 5. It was split on
 2026-11-02 into 6a (closed with item 3) and 6b (open).
+
+Board items 10 (replay-to-live handoff) and 11 (per-stream append order), the two B9
+findings of design §7.9, were never rows of this table; this run carried them only
+through row 6's delivery lines and §7.9's open notes. **Closed 2026-11-02** by ADR
+`2026-11-02-live-first-replay-xadd-auto-id.md`: live first, then replay, no flip, client
+dedups and sorts by `message_id`, cursor on replay acks only until the end-of-replay
+marker; `XADD … *` with the message id in the entry and a tail read on the retry path.
+Written into design §4.2, §4.4, §7.9, tradeoffs 5.5.2a and 5.5.2b, flow 2 (A3.4). Item
+7 (batch end, design §7.3) is required by the cursor rule and stays open on its form.

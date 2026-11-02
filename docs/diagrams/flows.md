@@ -126,20 +126,33 @@ sequenceDiagram
   LB->>CSB: connection handed to Chat server B
   B->>CSB: hello {device_id, last_synced_message_id, list_cursor, app_state}
   CSB->>R: SET route:{B}:{device} = server_id, presence online
-  CSB->>R: XRANGE sq:{device} (last_synced_message_id, COUNT 100
-  R-->>CSB: entries {m, c} newer than the cursor
-  CSB->>MS: SELECT bodies by (conversation_id, bucket, message_id)
-  MS-->>CSB: messages
-  CSB->>B: deliver, batch of 100 in ID order
-  B->>CSB: ack {up_to_stream_id}, cursor advances
-  CSB->>B: live traffic begins
+  Note over CSB: the connection is subscribed to live pushes first, before the replay starts. No replay phase, no flip (decided 2026-11-02)
+  par the replay, from the cursor
+    CSB->>R: XRANGE sq:{device} (last_synced_message_id, COUNT 100
+    R-->>CSB: entries {m, c} newer than the cursor
+    CSB->>MS: SELECT bodies by (conversation_id, bucket, message_id)
+    MS-->>CSB: messages
+    CSB->>B: deliver {message, stream_id}, batch of 100 in stream order
+    B->>CSB: ack {up_to_stream_id}, the cursor advances on replay acks only until the marker
+  and live pushes on the same socket, meanwhile
+    CSA->>R: XADD sq:{B device} * {m, c}, a new message from A, Redis-assigned entry id
+    CSA->>CSB: push deliver {message, stream_id}
+    CSB->>B: deliver {message, stream_id}
+    Note over B: stored, keyed by message_id. If the replay later reaches the same entry the second copy is a no-op. Its stream_id is not applied to the cursor before the marker
+  end
+  CSB->>B: end-of-replay marker (batch_end flag or replay_done frame, item 7, required since 2026-11-02)
+  Note over B: B renders from its store sorted by message_id, never in socket arrival order, the order the store clusters by and the history page returns
+  CSB->>B: live traffic continues, each deliver carries its stream_id and the ack advances the cursor
   Note over B,CSB: offline longer than 24 h: the stream is trimmed past the cursor, no replay, each chat loads from the message store on open (slow path, flow 4 part 2)
 ```
 
 What it answers: the message waits in Redis as an ID in the device's stream (§4.2),
 with the body in the store; the recipient is notified by a push hint without the body
 (§3.6); on reconnect the list comes from the summary read first and the messages from
-the stream replay (§4.3, §4.4).
+the stream replay (§4.3, §4.4). The replay and live pushes share the socket from the
+`hello` on: live first, then replay, no flip, so nothing appended during the replay is
+skipped; the client dedups and sorts by `message_id`, and the device cursor takes a
+live frame's entry id only after the end-of-replay marker (§4.4, decided 2026-11-02).
 
 ## Flow 3 · Send to a group of 100
 
@@ -165,7 +178,7 @@ sequenceDiagram
   CSA->>R: MGET route:{member}:{device} for 99 members, up to 5 devices each, plus A's other devices
   R-->>CSA: a server per device with a socket, none for the rest
   loop every recipient device (up to 150), fan-out on write, bounded per-destination buffer
-    CSA->>R: XADD sq:{device} {m, c}, idempotent ID derived from the Snowflake, retried in the same loop as the store write
+    CSA->>R: XADD sq:{device} * {m, c}, Redis-assigned entry id, retried in the same loop as the store write. On a timeout the retry first reads the stream tail and skips a present message_id (decided 2026-11-02)
     alt device has a route
       CSA->>CSn: push deliver {message, stream_id}
       CSn->>Bn: deliver
