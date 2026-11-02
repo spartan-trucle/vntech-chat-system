@@ -1,22 +1,22 @@
 /**
  * B9 · the per-device sync queue of design §4.2 on real Redis Streams, one stream per
- * device, the three commands verbatim:
+ * device, the commands verbatim (B10: `XADD … *`, live-first ADR):
  *
- *   XADD   sq:{device} MAXLEN ~ <maxLen> <snowflake>-0 m <message_id> c <conversation_id>
- *   XRANGE sq:{device} (<cursor> + COUNT <n>          ('-' when there is no cursor)
- *   XTRIM  sq:{device} MINID <id>                      (returns the dropped count)
+ *   XADD      sq:{device} MAXLEN ~ <maxLen> * m <message_id> c <conversation_id>
+ *   XRANGE    sq:{device} (<cursor> + COUNT <n>          ('-' when there is no cursor)
+ *   XREVRANGE sq:{device} + - COUNT <n>                   (the retry path's tail read)
+ *   XTRIM     sq:{device} MINID <id>                      (returns the dropped count)
  *
  * plus `first` = `XRANGE sq:{device} - + COUNT 1` for the trim-boundary check.
  *
- * Two facts the in-memory adapter hid (test/redis/syncQueue.test.ts):
- * - Redis refuses an XADD whose id is at or below the stream's top entry. A retry of an id
- *   that is already in the stream is the idempotent case of §4.2 and returns normally; any
- *   other out-of-order append is surfaced with the key in the error, never reordered.
- * - `MAXLEN ~` trims whole radix-tree nodes: the cap is a floor, not an exact length.
+ * Redis assigns the entry id, so two appends to one stream need no ordering: the B9 fact
+ * "an XADD at or below the top id is refused" no longer applies to the fan-out. What is
+ * still a fact (test/redis/syncQueue.test.ts): `MAXLEN ~` trims whole radix-tree nodes, so
+ * the cap is a floor, not an exact length.
  */
 
 import type { Redis } from 'ioredis';
-import type { StreamEntry, SyncQueue } from '../ports/SyncQueue.js';
+import { XaddTimeout, type StreamEntry, type StreamEntryBody, type SyncQueue } from '../ports/SyncQueue.js';
 import type { DeviceId, StreamId } from '../protocol.js';
 import { keyOf } from './client.js';
 
@@ -24,19 +24,21 @@ export interface RedisSyncQueueOptions {
   prefix?: string;
   /** `MAXLEN ~` cap per stream (design §4.5: 100 000). */
   maxLen?: number;
+  /** `xadd` rejects with `XaddTimeout` when Redis has not answered within this many ms (default 5 s). */
+  xaddTimeoutMs?: number;
 }
-
-const TOP_ID_ERROR = 'equal or smaller than the target stream top item';
 
 export class RedisSyncQueue implements SyncQueue {
   private readonly redis: Redis;
   private readonly prefix: string | undefined;
   private readonly maxLen: number;
+  private readonly xaddTimeoutMs: number;
 
   constructor(redis: Redis, opts: RedisSyncQueueOptions = {}) {
     this.redis = redis;
     this.prefix = opts.prefix;
     this.maxLen = opts.maxLen ?? 100_000;
+    this.xaddTimeoutMs = opts.xaddTimeoutMs ?? 5000;
   }
 
   /** `sq:{device}` under the prefix. */
@@ -44,25 +46,32 @@ export class RedisSyncQueue implements SyncQueue {
     return keyOf(this.prefix, `sq:${device_id}`);
   }
 
-  async xadd(device_id: DeviceId, entry: StreamEntry): Promise<StreamId> {
+  async xadd(device_id: DeviceId, entry: StreamEntryBody): Promise<StreamId> {
     const key = this.keyOf(device_id);
+    const command = this.redis.xadd(key, 'MAXLEN', '~', this.maxLen, '*', 'm', entry.m, 'c', entry.c);
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new XaddTimeout(device_id, this.xaddTimeoutMs)), this.xaddTimeoutMs);
+    });
     try {
-      await this.redis.xadd(key, 'MAXLEN', '~', this.maxLen, entry.id, 'm', entry.m, 'c', entry.c);
-      return entry.id;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (!message.includes(TOP_ID_ERROR)) throw e;
-      // At or below the top: an idempotent retry if the id is already there, otherwise a real
-      // out-of-order append that the caller must know about (the stream would lie by omission).
-      const present = await this.redis.xrange(key, entry.id, entry.id, 'COUNT', 1);
-      if (present.length > 0) return entry.id;
-      throw new Error(`XADD ${key} ${entry.id}: ${message}`, { cause: e });
+      const id = await Promise.race([command, timeout]);
+      if (id === null) throw new Error(`XADD ${key}: no id returned`);
+      return id;
+    } finally {
+      clearTimeout(timer);
+      // The command still settles on its own; a late rejection must not be unhandled.
+      command.catch(() => undefined);
     }
   }
 
   async xrange(device_id: DeviceId, after: StreamId | null, count: number): Promise<StreamEntry[]> {
     const start = after === null ? '-' : `(${after}`;
     const raw = await this.redis.xrange(this.keyOf(device_id), start, '+', 'COUNT', count);
+    return raw.map(([id, fields]) => entryOf(id, fields));
+  }
+
+  async xrevrange(device_id: DeviceId, count: number): Promise<StreamEntry[]> {
+    const raw = await this.redis.xrevrange(this.keyOf(device_id), '+', '-', 'COUNT', count);
     return raw.map(([id, fields]) => entryOf(id, fields));
   }
 

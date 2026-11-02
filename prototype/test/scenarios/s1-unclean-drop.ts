@@ -8,9 +8,8 @@
  */
 
 import { DEVICES } from '../../src/fixtures.js';
-import { streamIdOf } from '../../src/ports/index.js';
 import { defineScenario } from './scenario.js';
-import { acksOf, alignToPingTick, delivers, seconds, send } from './helpers.js';
+import { acksOf, alignToPingTick, delivers, seconds, send, sidOf } from './helpers.js';
 
 export const s1 = defineScenario({
   id: 'S1',
@@ -27,7 +26,8 @@ export const s1 = defineScenario({
     const first = await send(env, truc, 'c1', 'Hi Khanh');
     await env.until(() => delivers(khanh).length === 1, 'first deliver at Khanh');
     await env.settle();
-    await env.until(() => khanh.cursor === streamIdOf(first), 'Khanh acked the first message');
+    // Live mode (replay_done came with the hello): the frame's stream id is the cursor at once.
+    env.assertEqual(khanh.cursor, sidOf(khanh, first), 'Khanh applied the live frame to its cursor');
     const cursor = khanh.cursor!;
 
     env.step(`Both phones stay healthy for ${seconds(30 * n.pingMs / 5)}: pongs refresh last_pong_at in memory, nothing else moves.`);
@@ -90,9 +90,10 @@ export const s1 = defineScenario({
 
     await env.until(() => delivers(khanh).length === 2, 'the queued message replayed to Khanh');
     await env.settle();
-    await env.until(() => env.phase('B1') === 'live', 'Khanh live after the replay');
-    env.assertEqual(khanh.delivered.map((m) => m.message_id), [first, during], 'exactly the one message sent during the outage, once');
+    await env.until(() => !khanh.inReplay, 'replay_done at Khanh');
+    env.assertEqual(khanh.rendered().map((m) => m.message_id), [first, during], 'exactly the one message sent during the outage, once');
     env.assertEqual(khanh.duplicatesDropped, 0, 'no duplicate');
+    env.assertEqual(khanh.cursor, sidOf(khanh, during), 'the ack at replay_done moved the cursor to the replayed entry');
     env.assert(env.rows('queue').includes(`XRANGE sq:B1 (${cursor} + → 1 entries, join bodies from the store`), 'replay from the cursor');
     env.step("Khanh's phone is complete: no gap, no duplicate; the message typed while down was stored once.");
   },

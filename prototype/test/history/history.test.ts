@@ -354,20 +354,26 @@ describe('B4 history page API, summary row and slow path (design §2.3, §4.3, �
       const khanh = await connect(DEVICES.khanhPhone);
       const id = await sendMsg(khanh, 'c1', 'sent while the laptop was away');
 
-      // Hold the laptop in the replay phase, as a long queue drain would (B3).
+      // Hold the laptop's replay on its first XRANGE, as a long queue drain would (B3); the laptop has a cursor, so it replays.
+      const queue = srv.ctx.ports.syncQueue;
+      const xrange = queue.xrange.bind(queue);
       let release!: () => void;
       const held = new Promise<void>((r) => { release = r; });
-      srv.ctx.events.on('device_connected', async ({ conn }) => { if (conn.device_id === 'A2') await held; });
+      queue.xrange = async (d, after, count) => {
+        if (d === 'A2') { queue.xrange = xrange; await held; }
+        return xrange(d, after, count);
+      };
       const laptop = new ScriptedClient(DEVICES.trucLaptop, { url: srv.url, trace: srv.ctx.trace });
       clients.push(laptop);
+      laptop.cursor = '0-0';
       await laptop.connect();
       await laptop.hello();
-      expect(srv.ctx.connections.byDevice('A2')?.phase).toBe('replay');
+      expect(srv.ctx.connections.byDevice('A2')?.mode).toBe('replay');
 
       const list = await get<{ conversations: Array<{ conversation_id: string; last_message_id: MessageId; last_preview: string; unread_count: number }> }>('/conversations?user_id=truc&device_id=A2');
       expect(list.status).toBe(200);
       expect(list.body.conversations).toEqual([expect.objectContaining({ conversation_id: 'c1', last_message_id: id, last_preview: 'sent while the laptop was away', unread_count: 1 })]);
-      expect(srv.ctx.connections.byDevice('A2')?.phase).toBe('replay');
+      expect(srv.ctx.connections.byDevice('A2')?.mode).toBe('replay');
       expect(laptop.received.filter((f) => f.t === 'deliver')).toHaveLength(0);
 
       // In the shared trace the list request precedes any deliver row to the laptop.

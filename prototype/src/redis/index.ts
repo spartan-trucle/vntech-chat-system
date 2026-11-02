@@ -25,6 +25,8 @@ export interface RedisPortsOptions extends RedisClientOptions {
   prefix?: string;
   /** `MAXLEN ~` cap per stream (design §4.5). */
   maxLen?: number;
+  /** `xadd` timeout before the retry path (design §4.2). */
+  xaddTimeoutMs?: number;
 }
 
 export interface RedisPorts {
@@ -40,7 +42,11 @@ export function createRedisPorts(opts: RedisPortsOptions = {}): RedisPorts {
   const redis = createRedisClient(opts.url === undefined ? {} : { url: opts.url });
   const prefixOpt = opts.prefix === undefined ? {} : { prefix: opts.prefix };
   return {
-    syncQueue: new RedisSyncQueue(redis, { ...prefixOpt, ...(opts.maxLen === undefined ? {} : { maxLen: opts.maxLen }) }),
+    syncQueue: new RedisSyncQueue(redis, {
+      ...prefixOpt,
+      ...(opts.maxLen === undefined ? {} : { maxLen: opts.maxLen }),
+      ...(opts.xaddTimeoutMs === undefined ? {} : { xaddTimeoutMs: opts.xaddTimeoutMs }),
+    }),
     routes: new RedisRouteTable(redis, prefixOpt),
     presence: new RedisPresenceStore(redis, prefixOpt),
     redis,

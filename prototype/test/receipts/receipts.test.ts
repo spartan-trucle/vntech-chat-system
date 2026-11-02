@@ -270,23 +270,17 @@ describe('B5 fan-out hooks: delivery cursors and push hints without the body (de
     for (const r of gateway.recorded()) expect(r.hint).toEqual({ conversation_id: 'c2', message_id: id, sender_display_name: 'Khanh' });
   });
 
-  test('a device with a route but no push (still replaying) gets no hint: the queue carries the message', async () => {
+  test('a device with a route but no push (its live lane suspended by a re-replay) gets no hint: the queue carries the message', async () => {
     const srv = await start();
     const phone = await connect(DEVICES.trucPhone);
-    let release!: () => void;
-    const held = new Promise<void>((r) => { release = r; });
-    srv.ctx.events.on('device_connected', async ({ conn }) => { if (conn.device_id === 'B1') await held; });
-    const khanh = new ScriptedClient(DEVICES.khanhPhone, { url: srv.url, trace: srv.ctx.trace });
-    clients.push(khanh);
-    await khanh.connect();
-    await khanh.hello();
-    expect(srv.ctx.connections.byDevice('B1')?.phase).toBe('replay');
+    const khanh = await connect(DEVICES.khanhPhone);
+    srv.ctx.connections.byDevice('B1')!.pushes.suspendLive();
 
     phone.send(msg({ client_msg_id: 'r1' }));
     await phone.expect('msg_ack');
     await settle();
     expect(gateway.recorded().map((r) => r.device_id)).toEqual(['A2']);
-    release();
+    expect(khanh.received.filter((f) => f.t === 'deliver')).toHaveLength(0);
   });
 
   test('the mute hook runs per conversation per user before the push: a muted device gets no hint', async () => {

@@ -17,7 +17,11 @@ describeMessageStoreContract('InMemoryMessageStore', () => {
   let now = 1_000_000;
   return { store: new InMemoryMessageStore({ now: () => now }), advance: (ms) => { now += ms; } };
 });
-describeSyncQueueContract('InMemorySyncQueue', (opts) => new InMemorySyncQueue(opts));
+describeSyncQueueContract('InMemorySyncQueue', (opts = {}) => {
+  const q = new InMemorySyncQueue({ ...(opts.maxLen === undefined ? {} : { maxLen: opts.maxLen }), ...(opts.xaddTimeoutMs === undefined ? {} : { xaddTimeoutMs: opts.xaddTimeoutMs }) });
+  if (opts.xaddDelayMs !== undefined) q.faults.xaddDelayMs = opts.xaddDelayMs;
+  return q;
+});
 describeRouteTableContract('InMemoryRouteTable', () => new InMemoryRouteTable());
 describePresenceStoreContract('InMemoryPresenceStore', () => {
   let now = 1_000_000;

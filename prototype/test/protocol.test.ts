@@ -19,12 +19,23 @@ const serverFrames: ServerFrame[] = [
   { t: 'msg_ack', client_msg_id: 'c-1', message_id: '41' },
   {
     t: 'deliver',
-    stream_id: '41-0',
+    stream_id: '1761955200000-0',
+    replay: true,
     message: {
       conversation_id: 'c1', bucket: 202611, message_id: '41', sender_id: 'truc', client_msg_id: 'c-1',
       body: 'hi', reply_to: null, media_key: null, media_size: null, media_mime: null, sha256: null, created_at: 1,
     },
   },
+  {
+    t: 'deliver',
+    stream_id: '1761955200000-1',
+    replay: false,
+    message: {
+      conversation_id: 'c1', bucket: 202611, message_id: '42', sender_id: 'truc', client_msg_id: 'c-2',
+      body: 'live', reply_to: null, media_key: null, media_size: null, media_mime: null, sha256: null, created_at: 2,
+    },
+  },
+  { t: 'replay_done' },
   { t: 'receipt', conversation_id: 'c1', user_id: 'khanh', last_read_id: '41' },
   { t: 'presence', user_id: 'khanh', state: 'online' },
   { t: 'presence', user_id: 'khanh', state: 'offline', last_seen: 1700000000000 },
@@ -57,6 +68,17 @@ describe('protocol frames', () => {
     expect(() => decodeFrame('{"t":"msg","client_msg_id":"c","conversation_id":"c1","body":"x","media_size":10}', 'client')).toThrow(FrameError);
     expect(() => decodeFrame('{"t":"msg","client_msg_id":"c","conversation_id":"c1","body":"x","media_mime":"image/png"}', 'client')).toThrow(FrameError);
     expect(() => decodeFrame('{"t":"msg","client_msg_id":"c","conversation_id":"c1","body":"x","sha256":"ab"}', 'client')).toThrow(FrameError);
+  });
+
+  test('deliver requires the replay flag, a boolean (replay-mode ADR): a frame without it, or with a string, is refused', () => {
+    const message = '{"conversation_id":"c1","bucket":202611,"message_id":"41","sender_id":"truc","client_msg_id":"c-1","body":"hi","reply_to":null,"media_key":null,"media_size":null,"media_mime":null,"sha256":null,"created_at":1}';
+    expect(() => decodeFrame(`{"t":"deliver","stream_id":"1-0","message":${message}}`, 'server')).toThrow(/deliver: missing field replay/);
+    expect(() => decodeFrame(`{"t":"deliver","stream_id":"1-0","replay":"yes","message":${message}}`, 'server')).toThrow(/deliver: field replay has the wrong type/);
+  });
+
+  test('replay_done carries nothing but its type and is a server frame only', () => {
+    expect(decodeFrame('{"t":"replay_done"}', 'server')).toEqual({ t: 'replay_done' });
+    expect(() => decodeFrame('{"t":"replay_done"}', 'client')).toThrow(FrameError);
   });
 
   test('rejects non-JSON', () => {
