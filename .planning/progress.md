@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-02, report round 27 (A3.4 merged 3dea2d4, board 8d8324c; item 7 in debate; 6 A3 decisions open: 4, 5, 6b, 7, 8, 9; 300 ms budgets await the author's confirmation)
+Last updated: 2026-11-02, report round 28 (item 7 decided, A3.5 to A and B10 to B; 5 A3 decisions open: 4, 5, 6b, 8, 9, plus text item 12; 300 ms budgets await the author's confirmation)
 
 ## Epics
 
@@ -12,7 +12,7 @@ Last updated: 2026-11-02, report round 27 (A3.4 merged 3dea2d4, board 8d8324c; i
 | A1 tradeoffs.md | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
 | A2 sequence diagrams | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
 | A4 rubric run | A | 1 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
-| A3 open decisions | hub + author | 2 | decisions 1, 2, 3, 6a, 10 and 11 decided (ADRs 6858647, b5f102d, 74ae209, this round); A3.3 text merged (8273ae9), A3.4 merged (3dea2d4), board updated (8d8324c); open: 4, 5, 6b, 7 (now required by item 10), 8, 9; 300 ms budgets in §2.7 still marked to confirm | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
+| A3 open decisions | hub + author | 2 | decisions 1, 2, 3, 6a, 7, 10 and 11 decided (ADRs 6858647, b5f102d, 74ae209, this round); A3.3 text merged (8273ae9), A3.4 merged (3dea2d4), board updated (8d8324c); A3.5 (item 7) handed to A, B10 scenario to B; open: 4, 5, 6b, 8, 9, text item 12; 300 ms budgets in §2.7 still marked to confirm | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
 | B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
 | B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
@@ -88,8 +88,8 @@ Also flagged by A4: spec §7 row 3 says "seven flows" but §4.2 has nine; a spec
 
 | # | Decision needed | Closes | Status |
 |---|---|---|---|
-| 7 | Replay batch end: a `batch_end` flag on the last deliver of a batch, or a `replay_done` frame, so the client stops acking on a heuristic | design §4.7 | open |
-| 8 | Delivery cursor: advance it on the replay ack instead of §3.4's separate delivered receipt | design §3.4, §4.4 | open |
+| 7 | Replay batch end | design §4.7 | **decided 2026-11-02**: no `batch_end`; ack persists the cursor only, never a credit; `deliver.replay` flag plus one `replay_done` frame as a mode boundary; on a dropped push the server re-replays alone from the dropped entry. ADR `2026-11-02-replay-mode-boundary.md`; text in A3.5 (lane A), scenario in B10 (lane B); ack cadence numbers to confirm |
+| 8 | Delivery cursor: advance it on the replay ack instead of §3.4's separate delivered receipt | design §3.4, §4.4 | open; the item 7 ADR requires it be decided on the replay ack |
 | 9 | Debounce versus reconnect: `dead + debounce` (11 + 5 = 16 s) must exceed `mirror + first backoff` (15 + 1 = 16 s) by a margin; today it fails by ~1.3 s. Pick the relation and the numbers | design §5.2, §1.4 | open |
 
 ### Added by B9 (real Redis)
