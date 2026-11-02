@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-02, report round 23 (A3.3 done on lane A c746e4c, handed to C; 7 A3 decisions open)
+Last updated: 2026-11-02, report round 24 (A3.3 merged 8273ae9, board a76e0f5; 7 A3 decisions open; 300 ms budgets await the author's confirmation)
 
 ## Epics
 
@@ -12,7 +12,7 @@ Last updated: 2026-11-02, report round 23 (A3.3 done on lane A c746e4c, handed t
 | A1 tradeoffs.md | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
 | A2 sequence diagrams | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
 | A4 rubric run | A | 1 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
-| A3 open decisions | hub + author | 2 | decisions 1, 2, 3 and 6a decided (ADRs 6858647, b5f102d, 74ae209); A3.3 text done (c746e4c), in review (C); 7 more open | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
+| A3 open decisions | hub + author | 2 | decisions 1, 2, 3 and 6a decided (ADRs 6858647, b5f102d, 74ae209); A3.3 text merged (8273ae9), board updated (a76e0f5); 7 more open; 300 ms budgets in §2.7 still marked to confirm | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
 | B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
 | B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
@@ -24,7 +24,7 @@ Last updated: 2026-11-02, report round 23 (A3.3 done on lane A c746e4c, handed t
 | B3 sync queue replay | B | 3 | merged (806a9ec) | claude/b-prototype-297ab9 @ 27365ec | 242 passed (lane, 3 runs), 212 alone | core defect: per-connection frame chain held acks behind hello during replay; fixed in core. Client acks on a heuristic (batch size or 20 ms gap) since nothing on the wire marks batch end | none |
 | B8 scenario suite | B | 4 | merged (3505098) | claude/b-prototype-297ab9 @ 252f739 | 258 passed (2 runs); scenarios 6/6 fake time and S1+S5 on real timers | S1: server debounce expiry (t+11+5) coincides with the client's first reconnect (15+1), watcher sees offline then online in the same second; 250 queued messages ≈ 1500 trace rows, near the 2000 cap | none |
 | B9 real Redis | B | 5 (optional) | merged (d433cf5) | claude/b-prototype-297ab9 @ a639e71 | 258 passed + 37 skipped without Redis; 34 passed + 3 expected failures on Docker Redis | Redis rejects XADD below the stream's top id; MAXLEN ~ is a floor; replay→live handoff has a real window under I/O (kept as an expected-failure e2e test) | none |
-| C1 integrate (per epic) | C | continuous | reviewing A3.3 | main @ 1ddd423 | 258 passed without Redis; Redis suite matches lane B | none | none |
+| C1 integrate (per epic) | C | continuous | idle; every epic merged | main @ a76e0f5 | 258 passed without Redis; Redis suite matches lane B | none | none |
 | C2 retrospective | C | 4 | done (82c53d1, B9 addendum e5398d7) | main | n/a | 15 findings in design.md §7, six written back in place, four ADRs amended, board section, README and memory links | three questions for the author, listed below |
 
 ## Merged to main
@@ -41,6 +41,7 @@ Last updated: 2026-11-02, report round 23 (A3.3 done on lane A c746e4c, handed t
 | A3.1 service discovery text | cdabce5 (board flipped 082904f) | 2026-11-02 |
 | B9 | d433cf5 (closing tasks de0d735; C2 addendum e5398d7) | 2026-11-02 |
 | A3.2 reply quoting text | fb242cd (board b0088d2) | 2026-11-02 |
+| A3.3 store replica loss text | 8273ae9 (board a76e0f5) | 2026-11-02 |
 
 ## Surprises collected for C2
 
