@@ -33,12 +33,16 @@ src/history/           B4  page API, summaries, slow path       (design §2.3, �
 src/receipts/          B5  read/delivery cursors, push hints    (design §3)
 src/presence/          B6  state machine, watch/unwatch, lease  (design §5)
 src/media/             B7  media intent and signed-URL stub     (design §6.2)
+src/redis/             B9  Redis adapters for SyncQueue, RouteTable, PresenceStore and
+                       the presence bus; createRedisPorts (see "Real Redis" below)
 src/fixtures.ts        Truc·phone (A1), Truc·laptop (A2), Khanh·phone (B1), bots; c1 c2 c3
 test/harness/          ScriptedClient: suppress pongs, blackhole, destroy without close,
                        replay a script, hop trace in the format of docs/prototype/index.html
 test/ports/contracts/  one contract per port, reusable by B9 against Redis
 test/scenarios/        S1–S6 (B8): one scripted run per scenario over the real server, the
                        framework (scenario.ts), the runner (run.ts) and the vitest wrapper
+test/redis/            B9: the same contracts against the Redis adapters, plus the server
+                       end to end over Redis; skipped unless REDIS_URL is set
 ```
 
 ## Rules for a module
@@ -78,3 +82,50 @@ trace itself is never cut), then `| # | scenario | design | result |`, and exits
 failure. A scenario is a `defineScenario({id, title, design, run})` in `test/scenarios/`;
 `run(env)` gets a fresh seeded server, a shared clock and trace, `connect`, `advance`,
 `step` (a `note` row narrating like the page) and `assert`.
+
+## Real Redis (B9)
+
+The three ports the design puts in Redis, and the presence bus, have Redis adapters in
+`src/redis/`; the contracts of `test/ports/contracts/` and `test/presence/contracts/`
+run against them unchanged. Everything else stays in memory by decision: the message
+store, summaries, conversations, cursors and devices are not Redis in the design, and
+the prototype has no Cassandra. Still one chat server process.
+
+| Port | Redis adapter | Commands |
+|---|---|---|
+| `SyncQueue` | `RedisSyncQueue` | `XADD sq:{device} MAXLEN ~ 100000 <snowflake>-0 m <id> c <conv>`, `XRANGE sq:{device} (<cursor> + COUNT 100`, `XTRIM sq:{device} MINID <id>`, `first` = `XRANGE - + COUNT 1` |
+| `RouteTable` | `RedisRouteTable` | `route:{user}:{device} → server_id` and the set `routes:{user}` (`SCARD`/`SMEMBERS` of §1.5), both in one `MULTI` |
+| `PresenceStore` | `RedisPresenceStore` | `SET presence:{user} <json> PX <ttl>`; `get` is a miss once Redis expired the key |
+| `PresenceBus` | `RedisPresenceBus` | `PUBLISH pres:{user}`; `SUBSCRIBE`/`UNSUBSCRIBE` on a dedicated subscriber connection, issued by the first and last local handler |
+
+```bash
+npm run redis:up      # docker compose: redis:7-alpine on 127.0.0.1:6399, no persistence
+npm run test:redis    # REDIS_URL=redis://127.0.0.1:6399 vitest run test/redis
+npm run redis:down
+```
+
+Skip rule: every file under `test/redis/` is `describe.skipIf(!process.env.REDIS_URL)`,
+prints one line saying so, and `npm test` stays green without Redis. Each file owns a
+random key prefix (`test-<hex>:`) and deletes only its own keys afterwards (`SCAN` +
+`UNLINK`), so files run in parallel against one Redis and nothing else in it is touched.
+`createRedisPorts({url, prefix})` returns `{syncQueue, routes, presence, redis, close}`
+for `createChatServer({ports})`; the bus goes in through `moduleOptions.presence.bus`.
+
+What the real commands showed that the in-memory adapters could not, each kept as a
+`test.fails` with the reason in its name rather than weakened:
+
+- `XADD` with an id at or below the stream's top entry is refused (`ERR The ID specified
+  in XADD is equal or smaller than the target stream top item`). The in-memory queue
+  sorted on insert; Redis makes "appends to one device's stream are issued in id order"
+  an invariant of the fan-out. The adapter treats an id that is already in the stream as
+  the idempotent retry of §4.2 and surfaces anything else.
+- `MAXLEN ~` trims whole radix-tree nodes: the cap is a floor, not an exact length.
+- The presence-store TTL runs on Redis's clock: the contract's `advance` sleeps for real,
+  with short leases.
+- Pub/sub delivery is asynchronous: `publish` returns when Redis has the message, the
+  handler runs when the subscriber connection receives it.
+- The replay's last, empty `XRANGE` is a real round trip. A message whose `XADD` lands
+  after it and whose fan-out runs before the connection flips to `live` is neither
+  replayed (the range was empty) nor pushed (`phase` was still `replay`); it waits in the
+  stream for the next reconnect. `test/redis/e2e.test.ts` holds the empty reply to show
+  it; `src/sync/` and `src/messaging/` are untouched (C2 finding).
