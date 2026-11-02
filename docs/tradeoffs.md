@@ -15,12 +15,11 @@ second bullet of §5.3).
 
 Bullets, or halves of bullets, with no decision anywhere in the design. They are the
 input to epic A3; they are not answered here. Closed since the first run: 5.2.2 and
-5.8.1, by the service-discovery ADR of 2026-11-02, and 5.3.5, by the reply-quoting ADR
-of the same day (entries below).
+5.8.1, by the service-discovery ADR of 2026-11-02, 5.3.5, by the reply-quoting ADR of
+the same day, and 5.8.2, by the store-quorum ADR of the same day (entries below).
 
 | ID | Bullet | What is open | Where the raw material is |
 |----|--------|--------------|---------------------------|
-| 5.8.2 | Message-store primary failure | no recovery story is written. The board's CAP answer (Component 2: RF 3, quorum writes, "a partition degrades to delayed, never cannot send") is the raw material, but there is no section on what the sender sees, what is lost, and how the ack path behaves while a replica set is degraded | board Component 2 |
 | 5.8.4 | Observability | the five metrics to page on are not named anywhere | — |
 
 Not a §5 bullet but open on the board for the same reason: **production runtime**
@@ -530,11 +529,43 @@ Not a §5 bullet but open on the board for the same reason: **production runtime
 
 ### 5.8.2 Failure of the message-store primary
 
-- **Open.** See the open list. Raw material: board Component 2's CAP answer (RF 3,
-  quorum writes, a partition degrades to delayed, never cannot send) and the
-  write-order invariant (no ack before the store write, so a degraded store delays
-  "sent" rather than lying about it). No section writes the recovery story or the
-  bound on loss.
+- **Chosen (decided 2026-11-02):** the store has no primary (Cassandra, RF 3), so the
+  failure designed for is two of a token range's three replicas down at once. Writes
+  go at LOCAL_QUORUM; on a QUORUM timeout the chat server retries once at ONE and
+  acks (budget 300 ms + 300 ms, the author's numbers to confirm). A write that fails
+  even at ONE is not acked: the outbox shows "sending…" and resends on backoff. Reads
+  (history page, summaries, cursors) follow the same rule, so normal mode is
+  R + W = 4 > RF. Dedup at two layers: the index read at LOCAL_QUORUM fails open on a
+  timeout and stores, and the `deliver` frame carries `sender_id` and `client_msg_id`
+  so the client drops a double. Recovery is hinted handoff (3 h window) then a repair
+  of the range; operators page on the count of writes acked at ONE per minute. Loss
+  bound: zero in normal operation; during a degraded window, the messages acked at ONE
+  on that range, lost only if the last replica also dies before hints replay. Design
+  §2.2, §2.7; ADR `2026-11-02-store-quorum-fallback-one.md`.
+- **N2 statement (same ADR):** the send/receive path stays available through the loss
+  of up to two replicas of any range, at the cost of N3 for the messages acked at
+  ONE, which now reads "absolute at QUORUM; during a degraded range, once replicated"
+  (spec N3 carries a footnote). Loss of all three replicas of a range, or of the
+  cluster, is unavailability for the affected conversations: sends are held in the
+  outbox and delivered when the store returns; nothing is lost on the client side.
+  Multi-region failover is deferred to spec §8.7.
+- **Rejected:** ONE for every write, always (the author's first choice, revised in the
+  debate: it opens the loss window on every message at every moment, including
+  rolling restarts, and breaks read-your-writes for dedup, unread and the second
+  device); QUORUM with no fallback (a two-replica loss becomes "cannot send" for the
+  affected conversations, against the availability priority); client dedup by
+  `client_msg_id` only, with no QUORUM index read (every retry after a lost ack would
+  store a second row in normal operation; kept as the second layer, not the only one);
+  refusing the send when the dedup read times out (consistent with N3, inconsistent
+  with the priority this decision sets).
+- **Why:** the system is write-heavy and availability comes first. With RF 3 and two
+  replicas down there is no third option between waiting (QUORUM) and resting the ack
+  on one replica (ONE), so the fallback is taken only on the range, and only while,
+  that choice is forced. The write-order invariant (store, at whatever level, before
+  the ack) is unchanged, so the ack never lies about a write that did not happen.
+- **Number:** 115 k writes/s peak (estimation §1) is trivial for the store at QUORUM,
+  and the QUORUM-to-ONE latency difference is about one internal round trip. ~550
+  store nodes (estimation §3.1) bound one range's share of the conversations.
 
 ### 5.8.3 Backpressure when a hot group floods a server
 

@@ -1,26 +1,27 @@
 # Rubric run — specification §7 against the design
 
-Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1, A3.2) after A3 decisions 1 and
-2 closed service discovery and reply quoting; no row was re-scored, only the gaps
-behind rows 3, 7 and 8 changed.
+Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1, A3.2, A3.3) after A3 decisions
+1 to 3 closed service discovery, reply quoting and store replica loss (with the N2 half
+of item 6); no row was re-scored, only the gaps behind rows 1, 3, 7 and 8 changed. The
+scores are the author's to re-run.
 Run against [`design.md`](design.md),
 [`estimation.md`](estimation.md), [`tradeoffs.md`](tradeoffs.md),
 [`diagrams/flows.md`](diagrams/flows.md), [`diagrams/high-level.html`](diagrams/high-level.html),
-the four ADRs in `.memory/decisions/` and the discussion page. Each row restates the
+the seven ADRs in `.memory/decisions/` and the discussion page. Each row restates the
 spec's pass condition as a checklist, cites where each item is, and scores **pass** or
 **fail**. A fail names the concrete gap; the gaps are collected at the end as the input
 to epic A3.
 
 | # | Area | Score | Gap behind a fail |
 |---|------|-------|-------------------|
-| 1 | Requirements | **fail** | N2 (availability) and N6 (security) are neither addressed nor explicitly deferred |
+| 1 | Requirements | **fail** | N6 (security) is neither addressed nor explicitly deferred; N2 (availability) is addressed since 2026-11-02 (design §2.7) |
 | 2 | Estimation | pass | |
 | 3 | Architecture | pass | no caveat left: the open notes in flows 2, 5 (service discovery) and 9 (reply quoting) were cleared 2026-11-02 |
 | 4 | Storage | pass | |
 | 5 | Media | pass | |
 | 6 | Delivery | pass | caveat: the fan-out threshold is a product boundary (100 → write, 10 k+ → read), not a computed crossover |
-| 7 | Trade-offs | **fail** | two §5 bullets have no decision and so no rejected alternative (five on 2026-11-01; 5.2.2, 5.8.1 and 5.3.5 closed 2026-11-02) |
-| 8 | Failure modes | **fail** | store-primary loss has no recovery story; single-server loss has a complete one since 2026-11-02 |
+| 7 | Trade-offs | **fail** | one §5 bullet has no decision and so no rejected alternative (five on 2026-11-01; 5.2.2, 5.8.1, 5.3.5 and 5.8.2 closed 2026-11-02) |
+| 8 | Failure modes | **fail** | both halves have a recovery story with a stated loss bound since 2026-11-02 (store replica loss in design §2.7); the score waits for the author's re-run, since item 4's buffer-timeout condition still hangs off the single-server half |
 | 9 | Clarity | pass | |
 
 Six of nine pass. The three fails are the ones the roadmap predicted, with one change:
@@ -48,17 +49,16 @@ which the roadmap did not predict, on N2 and N6.
 | F10 quoted reply | `reply_to` storage, the `parents` map on the page API, the deleted-parent placeholder as a render rule and jump-to-parent in design §2.2–§2.3 (quoting decided 2026-11-02) | addressed |
 | F11 auto-reconnect | design §1.4, flow 2 | addressed |
 | N1 latency p50/p99 server to server | latency-budget paragraph; flow 1 marks the measured span | addressed |
-| N2 availability 99.99 % send/receive | **nowhere.** No section states how the send/receive path reaches four nines: replica placement, what a Redis or chat-server loss does to availability as opposed to latency, degraded modes. The board's CAP note ("a partition degrades to delayed, never cannot send") is the only sentence near it | **not addressed, not deferred** |
-| N3 durability of an acked message | design §4.2 write-order invariant, RF 3 quorum (board Component 2) | addressed |
+| N2 availability 99.99 % send/receive | design §2.7 (decided 2026-11-02): the send/receive path stays available through the loss of up to two replicas of any range, at LOCAL_QUORUM with one retry at ONE; loss of all three, or of the cluster, holds sends in the outbox for the affected conversations; a chat-server loss is a reconnect (§1.4, §1.5) and a Redis loss costs reads, not messages (§4.2); multi-region failover deferred to spec §8.7. ADR `2026-11-02-store-quorum-fallback-one.md` | addressed, multi-region deferred |
+| N3 durability of an acked message | design §4.2 write-order invariant; §2.2, §2.7: absolute at QUORUM, which is every message in normal operation, and "once replicated" for a message acked at ONE during a degraded range (decided 2026-11-02; spec N3 carries a footnote, not a rewrite) | addressed, weakened by decision in a degraded range |
 | N4 consistent order | design §2.2 Snowflake clustering, `tradeoffs.md` 5.5.4 | addressed |
 | N5 horizontal scale | estimation §2 (200 chat servers), §3.1 (store nodes), §3.3 (Redis cluster); design §4.5 | addressed |
 | N7 24 h catch-up window | design §4.2, §4.5; ADR sync queue | addressed |
 | N6 transport encryption, membership-only reads | **only in part.** Membership is checked at media URL minting (design §6.3). Nothing says the history page API, the summary read or the socket's `msg` frame check conversation membership, and "transport encryption everywhere" appears only as TLS memory per socket in estimation §2. The prototype scope says "no auth", which is fine for the prototype but is not a design statement | **not addressed, not deferred** |
 
-**Gap:** N2 and N6 need either a section each or an explicit deferral line in
-`design.md`. N2 overlaps the A3 item on store-primary failure (row 8); N6 is small
-(a membership check at three named hops and one sentence on TLS) and is not on the A3
-list yet.
+**Gap:** N6 needs either a section or an explicit deferral line in `design.md`: a
+membership check at three named hops and one sentence on TLS. It is A3 item 6b below.
+N2 closed on 2026-11-02 with the store replica-loss decision (item 3 and item 6a).
 
 ## 2. Estimation — pass
 
@@ -136,7 +136,9 @@ fan-out has a stated threshold.*
   24 h (§1.4, §2.2); fan-out and queue append retried idempotently on a fixed ID
   (§4.2); replay from the device cursor, cursor advanced only on ack (§4.4, §4.7).
 - Client-side dedup: by `message_id` when a replay overlaps live traffic or a store
-  page (§4.4); `tradeoffs.md` 5.5.3 collects the whole path.
+  page (§4.4), and since 2026-11-02 by `(sender_id, client_msg_id)` on the `deliver`
+  frame, the second layer behind a dedup read that failed open in a degraded range
+  (§1.4, §2.7); `tradeoffs.md` 5.5.3 collects the whole path.
 - Threshold: fan-out on write up to the 100-member product ceiling; fan-out on read is
   named as the answer for 10 k+ channels in a separate design pass (design "Group
   ceiling" paragraph; board Component 3). **Caveat:** the point where the strategy
@@ -148,17 +150,18 @@ fan-out has a stated threshold.*
 *Pass if every decision in §5 names a rejected alternative.*
 
 - `tradeoffs.md` has one entry per §5 bullet (30) in chosen / rejected / why form,
-  and 27 of them name at least one rejected alternative from the design's own tables
+  and 29 of them name at least one rejected alternative from the design's own tables
   or an ADR.
-- **Gap:** the two bullets that are open in `tradeoffs.md` have no decision and
+- **Gap:** the one bullet that is open in `tradeoffs.md` has no decision and
   therefore no rejected alternative:
-  - 5.8.2 message-store primary failure
   - 5.8.4 the five metrics to page on
 - Closed 2026-11-02: 5.2.2 client-facing half and 5.8.1 cleanup half (ADR
   `2026-11-02-no-service-registry.md`: a registry, a liveness watcher and a 30 s lease
-  TTL rejected), and 5.3.5 quoting half (ADR `2026-11-02-reply-quote-by-id.md`: a
-  denormalized excerpt and per-quote client fetches rejected). These were the other
-  three gaps on 2026-11-01.
+  TTL rejected), 5.3.5 quoting half (ADR `2026-11-02-reply-quote-by-id.md`: a
+  denormalized excerpt and per-quote client fetches rejected), and 5.8.2 (ADR
+  `2026-11-02-store-quorum-fallback-one.md`: ONE always, QUORUM without fallback,
+  client-only dedup and refusing the send on a dedup timeout rejected). These were the
+  other four gaps on 2026-11-01.
 - Also thin, though not failing: 5.3.3 (only `created_at` was argued against
   Snowflake; the spec's other candidates were not), 5.4.2 and 5.4.5 (the rejected
   option is the one implied by the chosen sentence, with no table row behind it).
@@ -179,12 +182,15 @@ bounded data loss.*
   bounded buffer's timeout is shorter than the N1 p99 budget (500 ms) is not met by
   the prototype's 5 s default (§7.8); it belongs to the backpressure write-up (item 4
   below), which is decided on the board but still has no `design.md` section.
-- Store-primary loss: **no recovery story.** The board's CAP answer (RF 3, quorum
-  writes, a partition degrades to delayed) and the write-order invariant (no ack
-  before the store write, so a degraded store delays "sent" rather than lying) are the
-  raw material, but nothing says what the sender sees during a replica-set outage,
-  how long the ack path waits, what the client does with an unacked outbox, or what
-  the bound on loss is. This gap is also most of the N2 gap in row 1.
+- Store loss: the recovery story exists since 2026-11-02 (design §2.7, ADR
+  `2026-11-02-store-quorum-fallback-one.md`). The store has no primary; the failure
+  designed for is two of a range's three replicas down. What the sender sees: an ack
+  after LOCAL_QUORUM, or after one retry at ONE, inside 300 ms + 300 ms (the author's
+  numbers to confirm); a write that fails even at ONE is not acked and the outbox
+  resends on backoff. Bounded loss: zero in normal operation; in a degraded window,
+  the messages acked at ONE on that range, if the last replica also dies before hints
+  replay. Recovery: hinted handoff, then repair; operators page on the ONE-ack count.
+  Dedup at two layers covers the resend. The N2 gap in row 1 closed with it.
 
 ## 9. Clarity — pass
 
@@ -212,9 +218,11 @@ Each item names the spec bullet it closes and the rubric row it moves.
 |---|----------|--------|-------|
 | 1 | **Closed 2026-11-02.** Service discovery: no registry; a load balancer with an application-level health check and random assignment chooses the server, "least-loaded" dropped; nobody runs `mark-all-offline`, the client's reconnect heals routing and the 5 min lease is the only presence cleanup. ADR `2026-11-02-no-service-registry.md`; written into design §1.4, §1.5, §5.3, §5.5, tradeoffs 5.2.2, 5.8.1, flows 2 and 5 (A3.1) | §5.2.2, §5.8.1 (cleanup half) | done: rows 7 and 8 lost this gap, the open notes in flows 2 and 5 are gone; both rows still fail on items 3 to 5 |
 | 2 | **Closed 2026-11-02.** Reply quoting: resolved by ID on render, no excerpt stored; the page API returns a `parents` map read by key in one batch; a deleted parent renders as F10's placeholder by a render rule; jump-to-parent unchanged. ADR `2026-11-02-reply-quote-by-id.md`; written into design §2.2, §2.3, tradeoffs 5.3.5, flow 9 (A3.2) | §5.3.5, F10, flow 9 | done: row 7 lost this gap, row 3 has no caveat left; row 7 still fails on items 3 and 5 |
-| 3 | Message-store primary (replica-set) failure: what the sender sees, how long the ack path waits, what the outbox does, the bound on loss, and the recovery steps | §5.8.2, N2 | rows 1, 8 |
+| 3 | **Closed 2026-11-02.** Store replica loss: no primary, RF 3; writes and reads at LOCAL_QUORUM with one retry at ONE on timeout (300 ms + 300 ms, the author's numbers to confirm); a write that fails even at ONE is not acked and the outbox resends; dedup at two layers (fail-open index read, `deliver` carries `sender_id` and `client_msg_id`); hinted handoff then repair; loss bound stated. ADR `2026-11-02-store-quorum-fallback-one.md`; written into design §1.4, §2.2, §2.7, tradeoffs 5.8.2, flows 1 and 2, one footnote under spec N3 (A3.3) | §5.8.2, N2 | done: rows 1 and 8 lost this gap, row 7 lost 5.8.2; row 7 still fails on item 5, row 8 waits for the author's re-run |
 | 4 | Backpressure: move the board's bounded per-destination buffer and drop-to-stream rule into `design.md` with its budget | §5.8.3 | row 8 (the design text, not a new decision) |
 | 5 | Observability: the five metrics to page on | §5.8.4 | row 7 |
-| 6 | N2 and N6: an availability statement for the send/receive path (may fall out of item 3) and a membership check at the history page API, the summary read and the socket's `msg` frame, plus one sentence on TLS, or an explicit deferral of each | N2, N6 | row 1 |
+| 6a | **Closed 2026-11-02.** N2: the availability statement fell out of item 3 (design §2.7, tradeoffs 5.8.2): available through the loss of up to two replicas of any range; all three, or the cluster, holds sends in the outbox; multi-region deferred to spec §8.7 | N2 | row 1 |
+| 6b | N6: a membership check at the history page API, the summary read and the socket's `msg` frame, plus one sentence on TLS, or an explicit deferral of each | N6 | row 1 |
 
-Item 6 is new from this run; the roadmap's A3 text lists items 1 to 5.
+Item 6 is new from this run; the roadmap's A3 text lists items 1 to 5. It was split on
+2026-11-02 into 6a (closed with item 3) and 6b (open).

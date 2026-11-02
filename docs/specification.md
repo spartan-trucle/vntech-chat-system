@@ -47,6 +47,8 @@ extensible to the follow-up questions in §8.
 | N7 | Catch-up window | A device reconnecting within **24 hours** receives every missed message by replay with no gap and no duplicates. A device away longer gets the current chat list immediately and loads each conversation from persistent history on open |
 | N6 | Security | Transport encryption everywhere; a user only reads conversations they belong to |
 
+N3, note added 2026-11-02 (the only edit to this frozen file, see §6): "never lost" is absolute at QUORUM, which is every message in normal operation; during a degraded range it reads "once replicated". ADR `.memory/decisions/2026-11-02-store-quorum-fallback-one.md`, design §2.7.
+
 ### 2.3 Out of scope (for the first design pass)
 
 - End-to-end encryption (key exchange, device verification)
