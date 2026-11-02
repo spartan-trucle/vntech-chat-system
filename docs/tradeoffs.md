@@ -14,13 +14,12 @@ second bullet of §5.3).
 ## Open
 
 Bullets, or halves of bullets, with no decision anywhere in the design. They are the
-input to epic A3; they are not answered here.
+input to epic A3; they are not answered here. Closed since the first run: 5.2.2 and
+5.8.1, by the service-discovery ADR of 2026-11-02 (entries below).
 
 | ID | Bullet | What is open | Where the raw material is |
 |----|--------|--------------|---------------------------|
-| 5.2.2 | Service discovery | the **client-facing half**: which registry answers `GET /chat-servers` with the least-loaded healthy node, and which component runs `mark-all-offline(server_id)` when a chat server dies. Candidates named on the board: etcd, Consul, the orchestrator. The other half, server → "which server is this user on", is decided (routing table in Redis, entry 5.2.2 below) | design §1.4, §1.5; board "Still open" |
 | 5.3.5 | Reply reference | whether the quoted excerpt is **denormalized into the reply row or resolved by ID on render**. `reply_to` is stored as the parent's message ID (decided, entry 5.3.5 below) and §2.3 has the fetch-by-ID path for a parent outside the loaded window, but `design.md` gives no verdict. The board's requirement table (F10) and the simulated client already say "fetch by ID, placeholder if the parent is gone"; the design document has not caught up or the board is ahead of it. A3 must say which | design §2.2, §2.3; board F10; `prototype/index.html` |
-| 5.8.1 | Chat-server failure | the **mark-all-offline** half: who notices the dead node and walks its routing set. Depends on 5.2.2. The connection and in-flight-message halves are decided (entry 5.8.1 below) | design §1.5 |
 | 5.8.2 | Message-store primary failure | no recovery story is written. The board's CAP answer (Component 2: RF 3, quorum writes, "a partition degrades to delayed, never cannot send") is the raw material, but there is no section on what the sender sees, what is lost, and how the ack path behaves while a replica set is degraded | board Component 2 |
 | 5.8.4 | Observability | the five metrics to page on are not named anywhere | — |
 
@@ -52,8 +51,9 @@ Not a §5 bullet but open on the board for the same reason: **production runtime
   `deliver` + `ack`, receipts, presence `watch`/`unwatch` and events. Everything
   cacheable or bursty is HTTPS on the API servers: conversation history pages
   (§2.1, §2.3), the conversation summary on reconnect (§4.3), media intent and media
-  URL minting (§6.2, §6.3), `GET /chat-servers` (§1.4), login and profile (implied by
-  the stateless API layer of the frame). Design §2.1, §4.3, §6.
+  URL minting (§6.2, §6.3), login and profile (implied by the stateless API layer of
+  the frame). `GET /chat-servers` is static or gone behind the load balancer (§1.4,
+  5.2.2). Design §2.1, §4.3, §6.
 - **Rejected:** fetch history over the WebSocket (§2.6); derive the chat list from the
   queue replay instead of a summary read (§4.6); media bytes through any server (§6.5).
 - **Why:** a deep scroll by one user must not compete with live delivery for everyone
@@ -68,7 +68,7 @@ Not a §5 bullet but open on the board for the same reason: **production runtime
 - **Chosen:** server ping every 5 s, two misses = dead at ≈ 10 s, 1 s sweeper over an
   in-memory `last_pong_at`; client mirror rule: no ping for 15 s → close and
   reconnect. Reconnect with backoff 1 · 2 · 4 … 30 s cap, ±30 % jitter, to whichever
-  server `GET /chat-servers` returns. After reconnect the client sends `hello` with
+  healthy server the load balancer assigns (5.2.2). After reconnect the client sends `hello` with
   its device cursor and flushes its outbox; each outbox message carries a
   `client_msg_id` the server dedups on for 24 h. Design §1.2–§1.5.
 - **Rejected:** client-initiated JSON ping; TCP keepalive only; presence derived from a
@@ -106,24 +106,34 @@ Not a §5 bullet but open on the board for the same reason: **production runtime
 - **Chosen (server → server half):** a routing table in Redis,
   `route:{user_id}:{device_id} → server_id`, written on connect, deleted by the
   sweeper on a dead connection, read on every delivery. Design §1.5, §5.3.
-- **Open (client → server half):** which registry answers `GET /chat-servers` with
-  the least-loaded healthy node, and who runs `mark-all-offline(server_id)` on node
-  loss. See the open list. Nothing is chosen here.
-- **Rejected:** sticky routing of a user to a server across reconnects (board
-  Component 2, "Sticky sessions?": sticky by connection, by nature of TCP; the
-  inverse lookup is what is needed, never a pin).
+- **Chosen (client → server half, decided 2026-11-02):** **no registry.** A plain
+  load balancer with an application-level health check (socket accepted, `hello`
+  answered) and random assignment. The "least-loaded" requirement is dropped;
+  `GET /chat-servers` is a static endpoint or disappears behind the balancer's
+  address. Nothing runs `mark-all-offline(server_id)` on a node loss: routing heals
+  from the client's reconnect within the 15 s mirror rule, presence from the lease
+  (entry 5.8.1). Design §1.4, §1.5; ADR `2026-11-02-no-service-registry.md`.
+- **Rejected:** a registry (etcd, Consul, the orchestrator) answering "least-loaded"
+  (ADR: solves a load-skew problem no estimate shows); sticky routing of a user to a
+  server across reconnects (board Component 2, "Sticky sessions?": sticky by
+  connection, by nature of TCP; the inverse lookup is what is needed, never a pin).
 - **Why:** delivery needs the inverse lookup at fan-out time, per device, and it must
-  be gone within seconds of a drop, which is what the sweeper and the lease give.
+  be gone within seconds of a drop, which is what the sweeper and the client's
+  reconnect give. Choosing a server needs only "healthy", which a balancer answers;
+  the jittered backoff already spreads a crash's reconnects, so no component has to
+  know the load. A hung node must leave the pool, hence the app-level check.
 - **Number:** estimation §2: 15 M route entries × ~100 B = 1.5 GB, one Redis node,
-  replicated.
+  replicated. For the balancer: design §1.4, 100 k reconnects over a 30 s window ≈
+  3 k connects/s, which is what makes least-loaded unnecessary; random assignment
+  skews load by a few percent at 100 k sockets per node, accepted.
 
 ### 5.2.3 Where presence lives and how it is kept fresh
 
 - **Chosen:** detection is local to the chat server (the sweeper in §1.5). State
   lives in Redis `presence:{user}` with `last_seen`, as a **lease**: each chat server
   renews all of its users' keys every 2 min with a 5 min TTL, one pipelined batch per
-  server. The lease is the safety net for a dead chat server, behind service
-  discovery's mark-all-offline; it is never on the pong path. Subscriptions live in
+  server. The lease is the only cleanup for a dead chat server (ADR 2026-11-02,
+  entry 5.8.1); it is never on the pong path. Subscriptions live in
   chat-server memory (`watching[target] → set(conn)`); cross-server fan-out is one
   Redis pub/sub channel per watched user. Design §1.5, §5.3; ADR
   `2026-11-01-presence-subscription.md`.
@@ -479,22 +489,32 @@ Not a §5 bullet but open on the board for the same reason: **production runtime
 ### 5.8.1 Failure of one chat server
 
 - **Chosen (connections and in-flight messages):** clients notice the dead socket
-  within 15 s (mirror rule) and reconnect with jittered backoff to a different
-  server from `GET /chat-servers`. In-flight sends are in the client outbox with a
+  within 15 s (mirror rule) and reconnect with jittered backoff through the load
+  balancer to a healthy server (5.2.2). In-flight sends are in the client outbox with a
   `client_msg_id` and are flushed on reconnect; a message that was stored but whose
   ack was lost is answered with the same ID. Messages stored for the dead server's
   users are already in their sync streams (write order store → ack → queue), so the
   replay from the `hello` cursor delivers them. Nothing in the chat server's memory is
   a source of truth: the conn table and watch sets are rebuilt by the reconnects.
   Design §1.4, §1.5, §4.2, §4.7.
-- **Open (routing and presence cleanup):** `mark-all-offline(server_id)` walking the
-  dead node's routing set within seconds is required by §1.5, with the 5 min lease
-  as the safety net, but which component watches chat-server liveness and runs it is
-  the service-discovery decision (5.2.2). See the open list.
-- **Rejected:** nothing recorded beyond the alternatives in 5.1.3.
+- **Chosen (routing and presence cleanup, decided 2026-11-02):** nobody runs
+  `mark-all-offline(server_id)`. The stale route is overwritten by the device's own
+  `hello` on the new node within the mirror rule; a push to the dead node in that
+  window fails inside the bounded buffer's timeout and the message is already in the
+  stream. Presence is cleaned by the existing lease only: renewed every 2 min, 5 min
+  TTL. A device that lost its server and its network together shows online for up
+  to 5 min; accepted. Design §1.5; ADR `2026-11-02-no-service-registry.md`.
+- **Rejected:** a liveness watcher running `mark-all-offline` within seconds (ADR: a
+  component for one coincidence); a 30 s lease TTL to shrink the window (ADR: forces
+  renewal every ~10 s, 1.5 M Redis writes/s); plus the alternatives in 5.1.3.
 - **Why:** bounded data loss is zero for acknowledged messages by the write-order
-  invariant; the cost of a node loss is a reconnect storm, which the jitter bounds.
-- **Number:** design §1.4: 100 k clients over a 30 s window ≈ 3 k connects/s.
+  invariant; the cost of a node loss is a reconnect storm, which the jitter bounds,
+  and a presence error bounded by the lease TTL on a rare coincidence. Conditions
+  (ADR): the balancer's check is application-level, and the bounded buffer's timeout
+  is shorter than the N1 p99 budget, which the prototype's 5 s default (design §7.8)
+  does not yet meet; that sizing belongs to the backpressure write-up (5.8.3).
+- **Number:** design §1.4: 100 k clients over a 30 s window ≈ 3 k connects/s. Lease:
+  125 k writes/s at 2 min / 5 min, unchanged; 1.5 M/s at a 30 s TTL, rejected.
 
 ### 5.8.2 Failure of the message-store primary
 

@@ -7,12 +7,15 @@ One Mermaid `sequenceDiagram` per flow, drawn from [`design.md`](../design.md):
 (Component 3). The questions under each heading are the spec's; the diagram answers
 them in its notes. Open decisions appear as notes marked **open**, never as arrows.
 
-Participants are the seven kinds the architecture has, and nothing else:
+Participants are the eight kinds the architecture has, and nothing else (the load
+balancer joined on 2026-11-02 with the service-discovery decision; it appears only
+where a device connects, flows 2 and 5):
 
 | Participant | What it is in `design.md` |
 |-------------|---------------------------|
 | device | a phone, laptop or web client holding one WebSocket, an outbox and two cursors |
-| API server | stateless HTTPS: history pages, conversation summary, media intent and URL minting, chat-server lookup |
+| API server | stateless HTTPS: history pages, conversation summary, media intent and URL minting |
+| load balancer | one address for all chat servers; application-level health check (socket accepted, `hello` answered), random assignment; no registry behind it (§1.4, ADR 2026-11-02) |
 | chat server | stateful: sockets, pong times, watch sets, fan-out on write |
 | Redis | routing table `route:{user}:{device}`, sync streams `sq:{device}`, presence leases and pub/sub, summaries |
 | message store | wide-column `messages`, `read_cursors`, `delivery_cursors`, dedup index |
@@ -84,6 +87,7 @@ sequenceDiagram
   participant PG as Push gateway
   participant B as Device B (offline)
   participant API as API server
+  participant LB as Load balancer
   participant CSB as Chat server B (after reconnect)
 
   A->>CSA: msg {client_msg_id, conversation_id, body}
@@ -105,10 +109,10 @@ sequenceDiagram
   API->>MS: summary table for the rest, bounded unread count on the current bucket
   API-->>B: changed conversations: last_message_id, preview, last_sender, unread_count, my_read_cursor
   Note over B: the chat list renders now, with the unread dot, before any replay
-  B->>API: GET /chat-servers
-  Note over API: open: which registry picks the least-loaded healthy node (service discovery, A3)
-  API-->>B: Chat server B
-  B->>CSB: WS connect, hello {device_id, last_synced_message_id, list_cursor, app_state}
+  B->>LB: WS connect to the one chat address
+  Note over LB: a healthy node at random. Health check is socket accepted and hello answered. No registry, no least-loaded lookup (decided 2026-11-02)
+  LB->>CSB: connection handed to Chat server B
+  B->>CSB: hello {device_id, last_synced_message_id, list_cursor, app_state}
   CSB->>R: SET route:{B}:{device} = server_id, presence online
   CSB->>R: XRANGE sq:{device} (last_synced_message_id, COUNT 100
   R-->>CSB: entries {m, c} newer than the cursor
@@ -223,6 +227,7 @@ learn about it, and how fast?*
 sequenceDiagram
   autonumber
   participant A as Device A (user A)
+  participant LB as Load balancer
   participant CSA as Chat server A
   participant R as Redis
   participant CSB as Chat server B
@@ -265,7 +270,19 @@ sequenceDiagram
   loop every 2 min, per chat server
     CSA->>R: renew the presence leases of all local users (5 min TTL), never on the pong path
   end
-  Note over CSA,R: if Chat server A itself dies, mark-all-offline(server_id) walks its routing set within seconds (open: service discovery, A3). The lease is the safety net behind it.
+  opt Chat server A itself dies (decided 2026-11-02, nobody runs mark-all-offline)
+    Note over CSA: node lost. Its conn table and watch sets die with it. Its routes and leases stay in Redis until overwritten or expired
+    alt A's device still has network
+      Note over A: no ping for 15 s (mirror rule), then backoff
+      A->>LB: WS connect
+      LB->>CSB: a healthy node at random (here B's server)
+      A->>CSB: hello {app_state}
+      CSB->>R: SET route:A:{device} = CSB, overwriting the stale route, and presence:A = online, lease renewed
+      Note over CSA,R: the stale route lived about 16 s. A push sent to it meanwhile failed inside the bounded buffer's timeout. The message is already in A's stream and replays now
+    else A lost its network at the same moment
+      Note over R: nobody renews presence:A. The lease expires up to 5 min after the last renewal. Nothing is published on pres:A, a watcher learns it at its next GET presence:A. Accepted as a bounded error (ADR 2026-11-02)
+    end
+  end
   B->>CSB: unwatch {user_ids: A}, leaving the screen
   CSB->>R: UNSUBSCRIBE pres:A (last watcher gone)
 ```
