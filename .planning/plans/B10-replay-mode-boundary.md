@@ -27,10 +27,11 @@ Modify: `src/protocol.ts`, `src/server.ts`, `src/ports/SyncQueue.ts`, `src/ports
   timeout reported later) and `pushReplay(data) → Promise<boolean>` (waits for room, never
   times out, false only when the buffer was cleared). Plus `suspendLive()/resumeLive()`
   (the "stop queuing live frames" gate) and `drained()`.
-- **Events added to `ServerEvents`:** `push_dropped{conn, message, stream_id, reason}`
-  (emitted by messaging, the module that attempted the live push) and
-  `acked{conn, up_to, entries}` (emitted by sync after mapping the ack to stream entries;
-  receipts advances `delivery_cursors` on it — item 8).
+- **Event added to `ServerEvents`:** `push_dropped{conn, message, stream_id, reason}`
+  (emitted by messaging, the module that attempted the live push).
+- **Item 7 of the brief (delivery cursor on the replay ack) was dropped mid-epic by the
+  coordinator:** receipts keeps B5's rule (cursor advanced on `message_fanout.pushed`) and
+  its tests are unchanged; B11 replaces that rule with a client `delivered` frame.
 - **Mode:** `Connection.mode: 'live' | 'replay'`, initialised `'live'` by the core and
   written only by the sync module. `phase` keeps `'handshake' | 'live'` (`live` the moment
   `hello_ack` is sent); the `replay` phase is gone.
@@ -53,7 +54,7 @@ Modify: `src/protocol.ts`, `src/server.ts`, `src/ports/SyncQueue.ts`, `src/ports
 4. SyncQueue port + both adapters: `xadd(device, {m, c})`, store ids, `xrevrange`, `xaddTimeoutMs`, in-memory fault hook; contract rewritten; Redis contract without `failing` except `MAXLEN ~`.
 5. Sync module: live-first replay loop (no waiter), `replay_done`, backpressure re-replay on `push_dropped`, `acked` event, appender retry, sweeper boundary `${now-window}-0`.
 6. Messaging: live push through `pushLive` with the queued stream id, drop reporting, suspension.
-7. Receipts: delivery cursor on `acked`, not on `message_fanout.pushed`.
+7. (dropped, see above) Receipts unchanged.
 8. ScriptedClient: store by `message_id`, `rendered()`, replay mode, cadence, `onFrame` hook.
 9. Scenarios S1/S2/S4 updated; S7 on fake time and real time; S7 under Redis; e2e race rewritten; README.
 
