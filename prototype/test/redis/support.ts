@@ -14,7 +14,7 @@ export const REDIS_URL = process.env['REDIS_URL'];
 export const redisAvailable = REDIS_URL !== undefined;
 
 export function explainSkip(file: string): void {
-  if (!redisAvailable) console.log(`${file}: skipped, REDIS_URL is not set (npm run redis:up && npm run test:redis)`);
+  if (!redisAvailable) process.stderr.write(`${file}: skipped, REDIS_URL is not set (npm run redis:up && npm run test:redis)\n`);
 }
 
 /** `test-<8 hex>:` — unique per test file, so files run in parallel against one Redis. */
