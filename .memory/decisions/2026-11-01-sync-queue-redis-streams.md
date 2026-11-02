@@ -1,7 +1,7 @@
 # ADR: Sync queue backing and cursor ownership
 
 Date: 2026-11-01
-Status: Accepted, amended 2026-11-01 after the prototype (B3, S2; design §7.3)
+Status: Accepted, amended 2026-11-01 after the prototype (B3, S2; design §7.3) and 2026-11-02 after real Redis (B9; design §7.9)
 Author: Truc Le
 
 ## Context
@@ -72,3 +72,21 @@ costs ~600 GB of memory per day before replication.
 - **Open, for the author.** Nothing marks a batch end on the wire (`batch_end` flag or
   `replay_done` frame, design §7.3); and with real Redis one more `XRANGE` after the
   switch to live is needed to close the append-after-empty-read window (B9).
+
+## Amendments (2026-11-02, from real Redis, B9)
+
+- **Append order is an invariant, not a convenience.** Redis Streams refuse an `XADD`
+  whose id is at or below the top entry. "Client-chosen Snowflake-derived ids make
+  retries idempotent" holds for a retry of the same id only; a lower id is an error.
+  Appends to one device's stream must be issued in message-id order. **Open** (design
+  §7.9): serialise per stream, or mint stream ids from Redis and carry the message id
+  in the entry only.
+- **`MAXLEN ~` is a floor.** Eviction is by whole radix node, about a hundred entries
+  of slack above the cap; "overflow takes the slow path" still holds, and evictions must
+  feed the trim boundary of the slow-path rule.
+- **The replay-to-live window is real under I/O** (the open item above, now confirmed
+  by an expected-failure test): a message appended after the last empty `XRANGE` and
+  fanned out before the flip to live waits for the next reconnect. Late, not lost.
+- The three contracts ran unchanged against Redis apart from a settle point for
+  asynchronous pub/sub and real sleeps for the TTL; 34 cases pass, 3 are kept as named
+  expected failures.

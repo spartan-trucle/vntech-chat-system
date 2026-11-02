@@ -463,6 +463,10 @@ Operations, and nothing else:
 The queue is written on the fan-out path, after the message store write and in the same
 retry loop, so a message that is stored is eventually in every recipient device's stream.
 `XADD` with a client-chosen ID derived from the Snowflake makes retries idempotent.
+With real Redis that holds for a retry of the same id only: the stream is append-only
+in id order and refuses a lower id, so appends to one device's stream must be issued in
+message-id order, and `MAXLEN ~` is a floor with node granularity, not an exact cap
+(prototype, §7.9, open).
 
 **Write order is an invariant: message store first, sender ack second, queue append
 third.** Nothing is ever in Redis that is not already in Cassandra, and the stream holds
@@ -795,7 +799,9 @@ definition of done: six scripted scenarios over the real server, all passing on 
 with the design's numbers and, for S1 and S5, on real timers; 258 tests; typecheck clean.
 Every surprise the build reported is listed here. The ones that change design text are
 written back into the section they touch, marked "(prototype, §7.n)". Nothing here
-decides an item on the A3 list; two new open questions are added to it at the end.
+decides an item on the A3 list; the new open questions are added to it at the end.
+Rows 16 to 18 and §7.9 were added on 2026-11-02 after B9 put real Redis behind the
+ports.
 
 ### 7.1 Every surprise, and whether it changed the design
 
@@ -816,6 +822,9 @@ decides an item on the A3 list; two new open questions are added to it at the en
 | 13 | B1 | One client test mixes fake and real time and fails about once in ten full-suite runs under load; the scenarios use larger budgets. | No (prototype note) |
 | 14 | A4 | N2 (availability) and N6 (security) were neither addressed nor deferred; spec §7 row 3 says seven flows where §4.2 has nine. | Already A3 item 6 in `rubric.md`; the second is a spec typo |
 | 15 | B, orchestration | Agent worktrees were cut from `origin/main`, not the lane branch; every subagent brief had to open with a fast-forward onto the lane branch. | No (process note) |
+| 16 | B9, Redis | Redis refuses an `XADD` whose id is at or below the stream's top entry. The in-memory queue sorted on insert, so it hid that appends to one device's stream must be issued in message-id order; today only the equal await depth of concurrent handlers keeps them ordered. A retry of the same id is still the idempotent case of §4.2. | **Open**, §4.2 (7.9) |
+| 17 | B9, Redis | `MAXLEN ~` trims whole radix-tree nodes: the cap is a floor with node-level granularity (about 100 entries), not the exact length the in-memory adapter enforced. §4.5's "caps the pathological case" is approximate. | Noted in §4.2 and the sync-queue ADR (7.9) |
+| 18 | B9, Redis | The replay-to-live handoff has a real window under I/O: a message whose `XADD` lands after the replay's last empty `XRANGE` and whose fan-out runs before the connection flips to `live` is neither replayed nor pushed until the next reconnect. The in-memory "same microtask drain" argument in the sync module is false once `XRANGE` is a round trip; the driver's reply FIFO is what usually saves it. Kept as an expected-failure test with its trace. | **Open**, §4.4 (7.9) |
 
 ### 7.2 §4.4: the replay runs beside the connection's frame handling
 
@@ -932,6 +941,42 @@ fan-out per tick) + headroom`, not as a small number; the prototype's default is
 a 5 s timeout. A push that times out is dropped and the device catches up through its
 queue, which is the board's rule and held under test.
 
+### 7.9 §4.2, §4.4: what real Redis showed (B9)
+
+B9 put the three Redis ports and the presence bus on a real Redis 7 behind the same
+contracts, with everything else still in memory and still one process. The in-memory
+runs keep their numbers; against Redis, 34 contract and end-to-end cases pass and three
+are kept as named expected failures rather than weakened, because each documents a fact
+the in-memory adapters hid.
+
+- **Per-stream append ordering (row 16).** Redis Streams are append-only in id order;
+  an `XADD` with an id at or below the top entry is an error, not a reorder. §4.2's
+  "client-chosen ID derived from the Snowflake makes retries idempotent" holds for a
+  retry of the same id and nothing else. Two concurrent sends to the same recipient can
+  reach the `XADD` for that device's stream out of id order unless something serialises
+  them. **Open for the author**, progress item 11: serialise appends per device stream
+  (one in-flight append per stream, the rest queued in id order), or let Redis mint the
+  stream id (`XADD … *`) and keep the message id only in the entry, which drops the
+  idempotent-retry property and needs the dedup elsewhere.
+- **`MAXLEN ~` is a floor (row 17).** The cap evicts whole radix nodes once one fills;
+  the stream can hold up to about a hundred entries more than the cap. The design's
+  "overflow takes the slow path" (sync-queue ADR) still holds; the boundary is fuzzy by
+  one node, which only matters to the trim-boundary rule of §7.3 if eviction is not
+  reported, so the adapter must feed evictions into the same boundary.
+- **The replay-to-live window (row 18).** §4.4 ends the replay when an `XRANGE` comes
+  back empty and then flips the connection to `live`. With a real round trip there is a
+  gap between the empty read and the flip; a message appended in that gap is skipped by
+  the replay (the range was empty) and by the push (the phase was still `replay`). It
+  is not lost, it is in the stream and arrives on the next reconnect, which may be hours
+  away. **Open for the author**, progress item 10: one more `XRANGE` after the flip to
+  `live` (the replay catches what landed in the gap, the client dedups any overlap with
+  a live push), or buffer live pushes for a connection in `replay` and release them
+  deduplicated at the flip. Either must be drawn into §4.4.
+
+Also observed, no design change: pub/sub delivery and the presence TTL run on Redis's
+clock asynchronously; the server tolerated both unchanged, only the contracts written
+for the synchronous in-memory bus and clock needed a settle point and real sleeps.
+
 ---
 
 ## Open on the board after this section
@@ -941,3 +986,9 @@ queue, which is the board's rule and held under test.
   replay `ack` should advance the delivery cursor in place of §3.4's delivered receipt.
 - Presence debounce versus the client's reconnect: the relation the 5 s debounce, the
   15 s mirror rule and the first backoff must keep (§7.4).
+- Replay-to-live handoff (§7.9, B9): close the window between the last empty `XRANGE`
+  and the flip to `live`, either one more `XRANGE` after the flip or buffered live
+  pushes released deduplicated; draw the choice into §4.4.
+- Per-stream append ordering (§7.9, B9): Redis Streams reject out-of-order ids, so
+  either serialise appends per device stream or mint stream ids from Redis and keep the
+  message id in the entry only; state the choice in §4.2.

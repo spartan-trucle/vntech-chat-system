@@ -8,7 +8,8 @@
 - [2026-11-01] Prototype runtime for the chat server: Node.js + TypeScript → `.memory/decisions/2026-11-01-prototype-runtime-nodejs.md` (conditions met: S1–S6 pass, 258 tests)
 
 ## What the prototype changed (2026-11-01)
-- `docs/design.md` §7: fifteen findings from the build, six written back into §1.2, §3.6, §4.4, §5.2, §5.4 and the sync-queue ADR; three new questions for the author (batch end on replay, delivery cursor on ack, debounce versus reconnect timing). Board section "What the prototype changed" on `docs/index.html`.
+- `docs/design.md` §7: eighteen findings from the build, six written back into §1.2, §3.6, §4.4, §5.2, §5.4 and the sync-queue ADR; five questions for the author (batch end on replay, delivery cursor on ack, debounce versus reconnect timing, replay-to-live handoff, per-stream append ordering). Board section "What the prototype changed" on `docs/index.html`.
+- [2026-11-02] §7.9 added after B9 (real Redis): append order per stream is an invariant, `MAXLEN ~` is a floor, the replay-to-live window is real under I/O; sync-queue ADR amended a second time.
 
 Design decisions made in the discussion are recorded in `docs/design.md` and on the
 "Arguments" section of `docs/index.html`; the ADR folder holds the ones that have a
