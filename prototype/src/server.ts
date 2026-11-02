@@ -15,7 +15,8 @@ import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { Snowflake } from './ids.js';
-import { decodeFrame, encodeFrame, FrameError, type AppState, type ClientFrame, type ClientFrameType, type DeviceId, type HelloAckFrame, type HelloFrame, type MsgFrame, type ServerFrame, type UserId } from './protocol.js';
+import { decodeFrame, encodeFrame, FrameError, type AppState, type ClientFrame, type ClientFrameType, type DeviceId, type HelloAckFrame, type HelloFrame, type Message, type MsgFrame, type ServerFrame, type StreamId, type UserId } from './protocol.js';
+import { PushBuffer } from './pushBuffer.js';
 import {
   InMemoryConversations, InMemoryCursors, InMemoryDevices, InMemoryMessageStore, InMemoryPresenceStore,
   InMemoryRouteTable, InMemorySummaries, InMemorySyncQueue,
@@ -55,7 +56,13 @@ const realTimers: Timers = {
 
 // ---- connection table (design §1.5) -------------------------------------------------
 
-export type ConnectionPhase = 'handshake' | 'replay' | 'live';
+/** `handshake` until `hello_ack` is sent, then `live` at once: there is no replay phase (live-first ADR). */
+export type ConnectionPhase = 'handshake' | 'live';
+/**
+ * Replay mode (replay-mode ADR): `replay` while the sync module's XRANGE loop runs for this
+ * connection, `live` otherwise. A boundary the connection crosses many times, not a phase.
+ */
+export type ConnectionMode = 'live' | 'replay';
 
 /** `conn_id → { user_id, device_id, last_pong_at, app_state }`, in process memory only. */
 export interface Connection {
@@ -67,8 +74,14 @@ export interface Connection {
   app_state: AppState;
   /** Updated by the connection module on every pong; never written to a store. */
   last_pong_at: number;
-  /** `replay` while the sync module drains the queue; live pushes wait for `live`. */
   phase: ConnectionPhase;
+  /** Written by the sync module only; the core initialises it to `live`. */
+  mode: ConnectionMode;
+  /**
+   * The bounded per-destination buffer of the backpressure rule, the only flow control for
+   * live and replay frames alike (replay-mode ADR). Created with the socket, cleared on cleanup.
+   */
+  readonly pushes: PushBuffer;
   closed: boolean;
   /** Display name for the trace, `Truc·phone`. */
   readonly name: string;
@@ -119,9 +132,9 @@ export interface ServerEvents {
   /** `hello` parsed, identity bound, route written; `ack` may be amended (e.g. `slow_path`). */
   hello: { conn: Connection; frame: HelloFrame; ack: HelloAckFrame };
   /**
-   * `hello_ack` sent; the connection is in the `replay` phase until every listener returns,
-   * then `live`. Runs beside the connection's frame chain, not inside it: later frames
-   * (acks, the outbox flush) are handled while the listeners run.
+   * `hello_ack` sent and the connection live. Runs beside the connection's frame chain, not
+   * inside it: later frames (acks, the outbox flush) are handled while the listeners run.
+   * The sync module starts its replay loop here, detached, after live pushes are already on.
    */
   device_connected: { conn: Connection; frame: HelloFrame };
   /** Entry removed and route deleted; `last_device` is the `SCARD route:{user} → 0` check of §1.5. */
@@ -134,10 +147,19 @@ export interface ServerEvents {
   message_received: { conn: Connection; frame: MsgFrame; reject: (code: string, message: string) => void };
   /** Messaging: row written to the message store (first in the write order). */
   message_stored: { message: import('./protocol.js').Message; sender: Connection };
-  /** Messaging: `msg_ack` sent to the sender (second); the sync module appends to queues here (third). */
-  message_acked: { message: import('./protocol.js').Message; sender: Connection; recipient_devices: DeviceId[] };
-  /** Messaging: direct pushes done; `pushed` got a `deliver` over a live socket, the rest did not. */
-  message_fanout: { message: import('./protocol.js').Message; recipient_devices: DeviceId[]; pushed: DeviceId[] };
+  /**
+   * Messaging: `msg_ack` sent to the sender (second); the sync module appends to queues here
+   * (third) and records the store-assigned entry id per device in `queued`, which the live
+   * `deliver` carries as its `stream_id`.
+   */
+  message_acked: { message: Message; sender: Connection; recipient_devices: DeviceId[]; queued: Map<DeviceId, StreamId> };
+  /** Messaging: direct pushes done; `pushed` got a `deliver` handed to a live socket, the rest did not. */
+  message_fanout: { message: Message; recipient_devices: DeviceId[]; pushed: DeviceId[] };
+  /**
+   * Messaging: the backpressure budget dropped a live push to `conn` (`full` now, or `timeout` /
+   * `error` later). The entry stays in the device's stream; the sync module re-replays from it.
+   */
+  push_dropped: { conn: Connection; message: Message; stream_id: StreamId; reason: 'full' | 'timeout' | 'error' };
 }
 
 type Listener<K extends keyof ServerEvents> = (payload: ServerEvents[K]) => void | Promise<void>;
@@ -231,6 +253,8 @@ export interface ServerContext {
   readonly trace: Trace;
   /** Per-module options keyed by module name (`connection`, `messaging`, …); tests tune intervals here. */
   readonly moduleOptions: Readonly<Record<string, unknown>>;
+  /** The push buffer bounds every connection was created with. */
+  readonly push: Readonly<PushOptions>;
   /** Register a handler for a client frame type; several may share a type and run in order. */
   onFrame<T extends ClientFrameType>(t: T, handler: FrameHandler<T>): void;
   /** Write one frame; false if the socket is gone (the message then belongs to the queue). */
@@ -238,6 +262,21 @@ export interface ServerContext {
   /** Close a connection the server decided is dead (or being replaced) and run the §1.5 cleanup. */
   kill(conn: Connection, reason: DisconnectReason): Promise<void>;
 }
+
+/** The backpressure budget per destination (board rule; replay-mode ADR). */
+export interface PushOptions {
+  /**
+   * Pushes one destination socket may have pending (handed to ws, not yet flushed) before a
+   * live push is dropped. ws reports a flush on the next tick, so every push issued within
+   * one tick counts as pending even on a healthy socket: the bound must leave room for one
+   * tick's worth of fan-out, which is why the default is in the hundreds.
+   */
+  maxPending: number;
+  /** A pending live push not flushed within this many ms is counted lost; the sync queue carries the message. */
+  pushTimeoutMs: number;
+}
+
+export const DEFAULT_PUSH_OPTIONS: PushOptions = { maxPending: 1000, pushTimeoutMs: 5000 };
 
 export interface ChatServerOptions {
   port?: number;
@@ -252,6 +291,8 @@ export interface ChatServerOptions {
   worker?: number;
   /** Per-module options, e.g. `{ connection: { pingMs: 50 } }`; each module reads only its own key. */
   moduleOptions?: Record<string, unknown>;
+  /** The per-connection push buffer's bounds; tests shrink them to force a drop. */
+  push?: Partial<PushOptions>;
 }
 
 export interface ChatServer {
@@ -268,9 +309,10 @@ export async function createChatServer(opts: ChatServerOptions = {}): Promise<Ch
   const clock: Clock = opts.clock ?? { now: () => Date.now() };
   const timers = opts.timers ?? realTimers;
   const serverId = opts.serverId ?? 'srv-1';
+  const push: PushOptions = { ...DEFAULT_PUSH_OPTIONS, ...(opts.push ?? {}) };
   const ports: Ports = {
     messages: opts.ports?.messages ?? new InMemoryMessageStore({ now: () => clock.now() }),
-    syncQueue: opts.ports?.syncQueue ?? new InMemorySyncQueue(),
+    syncQueue: opts.ports?.syncQueue ?? new InMemorySyncQueue({ now: () => clock.now() }),
     routes: opts.ports?.routes ?? new InMemoryRouteTable(),
     presence: opts.ports?.presence ?? new InMemoryPresenceStore({ now: () => clock.now() }),
     summaries: opts.ports?.summaries ?? new InMemorySummaries(),
@@ -300,6 +342,7 @@ export async function createChatServer(opts: ChatServerOptions = {}): Promise<Ch
   const cleanup = async (conn: Connection, reason: DisconnectReason): Promise<void> => {
     if (conn.closed) return;
     conn.closed = true;
+    conn.pushes.clear();
     connections._remove(conn);
     if (!conn.user_id || !conn.device_id) return;
     let last_device = false;
@@ -338,14 +381,13 @@ export async function createChatServer(opts: ChatServerOptions = {}): Promise<Ch
     await events.emit('hello', { conn, frame, ack });
     if (conn.closed) return;
     send(conn, ack);
-    conn.phase = 'replay';
-    // Detached from this connection's frame chain on purpose: the sync module replays in
-    // batches and waits for the device's `ack` of each (design §4.4), so frames sent after
-    // `hello_ack` must keep flowing to their handlers while the listeners run. The flip to
-    // `live` happens in the microtask that follows the last listener's return.
+    // Live at once (live-first ADR): pushes reach this socket from here on, and the sync
+    // module's replay loop, started by a listener below, runs beside them. Detached from this
+    // connection's frame chain on purpose (design §7.2): frames sent after `hello_ack` (acks,
+    // the outbox flush) must keep flowing to their handlers while the listeners run.
+    conn.phase = 'live';
     void events.emit('device_connected', { conn, frame })
-      .catch((e) => sendError(conn, 'internal', e instanceof Error ? e.message : String(e)))
-      .finally(() => { if (!conn.closed) conn.phase = 'live'; });
+      .catch((e) => sendError(conn, 'internal', e instanceof Error ? e.message : String(e)));
   };
 
   const onFrameMessage = async (conn: Connection, raw: string): Promise<void> => {
@@ -421,6 +463,8 @@ export async function createChatServer(opts: ChatServerOptions = {}): Promise<Ch
       app_state: 'foreground',
       last_pong_at: now,
       phase: 'handshake',
+      mode: 'live',
+      pushes: new PushBuffer(socket, { maxPending: push.maxPending, pushTimeoutMs: push.pushTimeoutMs, timers }),
       closed: false,
       name: 'unknown',
     };
@@ -450,6 +494,7 @@ export async function createChatServer(opts: ChatServerOptions = {}): Promise<Ch
     http,
     trace,
     moduleOptions: { ...(opts.moduleOptions ?? {}) },
+    push,
     onFrame: (t, handler) => {
       const list = frameHandlers.get(t) ?? [];
       list.push(handler as unknown as FrameHandler<ClientFrameType>);

@@ -1,6 +1,6 @@
 export type { MessageStore, MessageRef, ReadPartitionOptions } from './MessageStore.js';
-export type { SyncQueue, StreamEntry } from './SyncQueue.js';
-export { streamIdOf, messageIdOfStream, compareStreamIds } from './SyncQueue.js';
+export type { SyncQueue, StreamEntry, StreamEntryBody } from './SyncQueue.js';
+export { compareStreamIds, streamIdJustBelow, XaddTimeout } from './SyncQueue.js';
 export type { RouteTable } from './RouteTable.js';
 export type { PresenceStore, PresenceRecord } from './PresenceStore.js';
 export type { Summaries, ConversationSummary } from './Summaries.js';

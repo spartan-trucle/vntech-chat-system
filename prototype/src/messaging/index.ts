@@ -13,58 +13,20 @@
  * is ever acked that is not stored, and nothing is in a queue that is not acked. The order
  * is asserted by test/messaging/send.test.ts, not by convention.
  *
- * Pushes go through a bounded per-destination buffer (pushBuffer.ts); a push the
- * destination does not take within budget is dropped and the message stays in that
- * device's queue. The handler never waits for a socket to drain, so a slow recipient is a
- * delay for that recipient and not a stall for the sender.
+ * Pushes go through the connection's bounded buffer (src/pushBuffer.ts, owned by the core);
+ * a push the destination does not take within budget is dropped, reported as
+ * `push_dropped`, and the message stays in that device's queue, from which the sync module
+ * re-replays it (replay-mode ADR). The handler never waits for a socket to drain, so a slow
+ * recipient is a delay for that recipient and not a stall for the sender. Live first
+ * (live-first ADR): a connection in its initial replay is pushed to like any other; it is
+ * skipped only while its live lane is suspended by a re-replay after a drop.
  */
 
 import { bucketOf } from '../ids.js';
-import { encodeFrame, type DeviceId, type Message, type UserId } from '../protocol.js';
-import { streamIdOf } from '../ports/index.js';
-import type { Connection, ServerContext } from '../server.js';
-import { PushBuffer } from './pushBuffer.js';
-
-export interface MessagingOptions {
-  /**
-   * Pushes one destination socket may have pending (handed to ws, not yet flushed) before
-   * further pushes are dropped. ws reports a flush on the next tick, so every push issued
-   * within one tick counts as pending even on a healthy socket: the bound must leave room
-   * for one tick's worth of fan-out, which is why the default is in the hundreds.
-   */
-  maxPending: number;
-  /** A pending push not flushed within this many ms is counted lost; the sync queue carries the message. */
-  pushTimeoutMs: number;
-}
-
-export const DEFAULT_MESSAGING_OPTIONS: MessagingOptions = { maxPending: 1000, pushTimeoutMs: 5000 };
-
-/** `ctx.moduleOptions['messaging']`, with defaults for whatever the caller left out. */
-export function resolveMessagingOptions(raw: unknown): MessagingOptions {
-  const given = (typeof raw === 'object' && raw !== null ? raw : {}) as Partial<MessagingOptions>;
-  return {
-    maxPending: given.maxPending ?? DEFAULT_MESSAGING_OPTIONS.maxPending,
-    pushTimeoutMs: given.pushTimeoutMs ?? DEFAULT_MESSAGING_OPTIONS.pushTimeoutMs,
-  };
-}
+import { encodeFrame, type DeviceId, type Message, type StreamId, type UserId } from '../protocol.js';
+import type { ServerContext } from '../server.js';
 
 export function registerMessaging(ctx: ServerContext): () => void {
-  const opts = resolveMessagingOptions(ctx.moduleOptions['messaging']);
-
-  // One bounded buffer per destination connection, dropped with the connection.
-  const buffers = new Map<string, PushBuffer>();
-  const bufferOf = (dest: Connection): PushBuffer => {
-    let buffer = buffers.get(dest.id);
-    if (!buffer) {
-      buffer = new PushBuffer(dest.socket, { maxPending: opts.maxPending, pushTimeoutMs: opts.pushTimeoutMs, timers: ctx.timers });
-      buffers.set(dest.id, buffer);
-    }
-    return buffer;
-  };
-  const offDisconnected = ctx.events.on('device_disconnected', ({ conn }) => {
-    buffers.get(conn.id)?.clear();
-    buffers.delete(conn.id);
-  });
 
   /** Every registered device of every member, in member then registration order, minus the sending device. */
   const recipientDevicesOf = async (members: UserId[], sending_device: DeviceId): Promise<DeviceId[]> => {
@@ -137,35 +99,43 @@ export function registerMessaging(ctx: ServerContext): () => void {
     ctx.trace.add('ack', `→ ${conn.name} {cid:${client_msg_id.slice(0, 8)}, id:#${message_id}}`);
     const members = conversation?.members ?? (await ctx.ports.conversations.membersOf(conversation_id));
     const recipient_devices = await recipientDevicesOf(members, device_id);
-    await ctx.events.emit('message_acked', { message, sender: conn, recipient_devices });
+    const queued = new Map<DeviceId, StreamId>();
+    await ctx.events.emit('message_acked', { message, sender: conn, recipient_devices, queued });
 
     // 3. Direct push to every recipient device with a live socket; the rest is the queue's.
-    const deliver = encodeFrame({ t: 'deliver', message, stream_id: streamIdOf(message_id) });
     const pushed: DeviceId[] = [];
     const pushedNames: string[] = [];
     for (const recipient of recipient_devices) {
       const dest = ctx.connections.byDevice(recipient);
-      // `replay`: the sync module is draining the queue into this socket and the queue carries this message too.
       if (!dest || dest.phase !== 'live' || dest.closed || dest.socket.readyState !== dest.socket.OPEN) continue;
-      const buffer = bufferOf(dest);
-      const accepted = buffer.push(deliver, (reason) => {
-        const why = reason === 'timeout' ? `not taken within ${opts.pushTimeoutMs} ms` : 'socket error';
+      // The entry id the sync module got back from XADD … * for this device: the cursor the device applies or acks.
+      const stream_id = queued.get(recipient);
+      if (stream_id === undefined) {
+        ctx.trace.add('lost', `#${message_id} → ${dest.name}: not queued, no stream id to push with`);
+        continue;
+      }
+      const deliver = encodeFrame({ t: 'deliver', message, stream_id, replay: false });
+      const result = dest.pushes.pushLive(deliver, (reason) => {
+        const why = reason === 'timeout' ? `not taken within ${seconds(ctx.push.pushTimeoutMs)}` : 'socket error';
         ctx.trace.add('lost', `#${message_id} → ${dest.name}: ${why}, left to the queue`);
+        void ctx.events.emit('push_dropped', { conn: dest, message, stream_id, reason });
       });
-      if (accepted) {
+      if (result === 'accepted') {
         pushed.push(recipient);
         pushedNames.push(dest.name);
+      } else if (result === 'full') {
+        ctx.trace.add('lost', `#${message_id} → ${dest.name}: buffer full (${dest.pushes.pending} pending), left to the queue`);
+        await ctx.events.emit('push_dropped', { conn: dest, message, stream_id, reason: 'full' });
       } else {
-        ctx.trace.add('lost', `#${message_id} → ${dest.name}: buffer full (${buffer.pending} pending), left to the queue`);
+        // Not a drop: the sync module's loop ends only on an empty read, so it will reach this entry.
+        ctx.trace.add('queue', `#${message_id} → ${dest.name}: live pushes suspended during a re-replay, left to the stream`);
       }
     }
     if (pushed.length > 0) ctx.trace.add('push', `#${message_id} → ${pushedNames.join(', ')} over the socket`);
     await ctx.events.emit('message_fanout', { message, recipient_devices, pushed });
   });
 
-  return () => {
-    offDisconnected();
-    for (const buffer of buffers.values()) buffer.clear();
-    buffers.clear();
-  };
+  return () => {};
 }
+
+const seconds = (ms: number): string => (ms >= 1000 ? `${Math.round(ms / 100) / 10} s` : `${ms} ms`);

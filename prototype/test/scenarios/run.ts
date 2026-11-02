@@ -1,10 +1,10 @@
 /**
- * `npm run scenarios`: runs S1–S6 over the real server in order, prints each scenario's hop
+ * `npm run scenarios`: runs S1–S7 over the real server in order, prints each scenario's hop
  * trace in the format of docs/prototype/index.html (rows prefixed by the scenario id),
  * then a pass/fail table; exit 1 on any failure.
  *
  * Default: fake time with the design's numbers, so the timestamps read like the page.
- * `--real-time` (or `SCENARIOS_REAL_TIME=1`) runs S1 and S5 on real timers with scaled
+ * `--real-time` (or `SCENARIOS_REAL_TIME=1`) runs S1, S5 and S7 on real timers with scaled
  * intervals (ping 50 / dead 100 / sweep 10 ms, debounce 100 ms) as well; the other four
  * do not depend on a clock and stay on fake time.
  */
@@ -18,8 +18,9 @@ import { s3 } from './s3-duplicate-send.js';
 import { s4 } from './s4-list-before-replay.js';
 import { s5 } from './s5-presence-debounce.js';
 import { s6 } from './s6-media-metadata.js';
+import { s7 } from './s7-replay-mode-boundary.js';
 
-export const scenarios: Scenario[] = [s1, s2, s3, s4, s5, s6];
+export const scenarios: Scenario[] = [s1, s2, s3, s4, s5, s6, s7];
 
 export interface RunMode {
   realTime: boolean;

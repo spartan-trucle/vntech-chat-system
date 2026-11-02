@@ -1,12 +1,10 @@
 import { afterEach, describe, expect, test } from 'vitest';
 import type { Socket } from 'node:net';
-import { createChatServer, type ChatServer, type ServerEvents } from '../../src/server.js';
+import { createChatServer, type ChatServer, type PushOptions, type ServerEvents } from '../../src/server.js';
 import { ScriptedClient } from '../harness/ScriptedClient.js';
 import { DEVICES, type FixtureDevice } from '../../src/fixtures.js';
 import { bucketOf } from '../../src/ids.js';
-import { streamIdOf } from '../../src/ports/index.js';
 import type { DeliverFrame, ErrorFrame, MsgAckFrame, MsgFrame } from '../../src/protocol.js';
-import type { MessagingOptions } from '../../src/messaging/index.js';
 
 const msg = (over: Partial<MsgFrame> & Pick<MsgFrame, 'client_msg_id'>): MsgFrame => ({
   t: 'msg', conversation_id: 'c1', body: 'hi', ...over,
@@ -16,8 +14,8 @@ describe('B2 send path: store, ids, dedup, write order, fan-out (design §2.2, �
   let server: ChatServer | undefined;
   const clients: ScriptedClient[] = [];
 
-  const start = async (messaging: Partial<MessagingOptions> = {}): Promise<ChatServer> => {
-    server = await createChatServer({ port: 0, seed: true, moduleOptions: { messaging } });
+  const start = async (push: Partial<PushOptions> = {}): Promise<ChatServer> => {
+    server = await createChatServer({ port: 0, seed: true, push });
     return server;
   };
   /** Connects and says hello; the client shares the server's trace so the log interleaves like the page. */
@@ -66,7 +64,10 @@ describe('B2 send path: store, ids, dedup, write order, fan-out (design §2.2, �
 
     const deliver = (await khanh.expect('deliver')) as DeliverFrame;
     expect(deliver.message).toEqual(rows[0]);
-    expect(deliver.stream_id).toBe(streamIdOf(id));
+    // The stream id is the entry id the queue assigned for Khanh's device (XADD … *), and a live push says so.
+    const [entry] = await srv.ctx.ports.syncQueue.xrange('B1', null, 10);
+    expect(deliver.stream_id).toBe(entry!.id);
+    expect(deliver.replay).toBe(false);
     expect(delivers(phone)).toHaveLength(0);
   });
 
@@ -215,29 +216,62 @@ describe('B2 send path: store, ids, dedup, write order, fan-out (design §2.2, �
     expect(fanout[0]).toMatchObject({ recipient_devices: ['A2', 'B1', 'C1', 'D1', 'E1'], pushed: ['B1'] });
   });
 
-  test('a connection still in the replay phase gets no direct push; the queue carries the message', async () => {
+  test('live first (ADR 2026-11-02): a connection in its initial replay gets the direct push too; the replay delivers the same message again and the client keeps one', async () => {
     const srv = await start();
     const phone = await connect(DEVICES.trucPhone);
+    // Hold the replay loop on its first XRANGE: the connection is live and in replay mode at once.
+    const queue = srv.ctx.ports.syncQueue;
+    const xrange = queue.xrange.bind(queue);
     let release!: () => void;
     const held = new Promise<void>((r) => { release = r; });
-    srv.ctx.events.on('device_connected', async ({ conn }) => { if (conn.device_id === 'B1') await held; });
+    queue.xrange = async (d, after, count) => {
+      if (d === 'B1') { queue.xrange = xrange; await held; }
+      return xrange(d, after, count);
+    };
     const khanh = new ScriptedClient(DEVICES.khanhPhone, { url: srv.url, trace: srv.ctx.trace });
     clients.push(khanh);
+    khanh.cursor = '0-0';
     await khanh.connect();
     await khanh.hello();
-    expect(srv.ctx.connections.byDevice('B1')?.phase).toBe('replay');
+    const conn = srv.ctx.connections.byDevice('B1')!;
+    expect(conn.phase).toBe('live');
+    expect(conn.mode).toBe('replay');
     const fanout: ServerEvents['message_fanout'][] = [];
     srv.ctx.events.on('message_fanout', (p) => { fanout.push(p); });
 
     phone.send(msg({ client_msg_id: 'cid-replay' }));
     await phone.expect('msg_ack');
-    await new Promise((r) => setTimeout(r, 30));
-    expect(fanout[0]).toMatchObject({ recipient_devices: ['A2', 'B1'], pushed: [] });
-    expect(delivers(khanh)).toHaveLength(0);
+    const live = (await khanh.expect('deliver')) as DeliverFrame;
+    expect(live.replay).toBe(false);
+    expect(fanout[0]).toMatchObject({ recipient_devices: ['A2', 'B1'], pushed: ['B1'] });
     release();
+    await khanh.expect('replay_done');
+    expect(delivers(khanh).map((d) => d.replay)).toEqual([false, true]);
+    expect(khanh.rendered()).toHaveLength(1);
+    expect(khanh.duplicatesDropped).toBe(1);
   });
 
-  test('backpressure: a destination that does not take pushes within budget loses them to the queue; sender and other recipients unaffected', async () => {
+  test('a connection whose live lane is suspended (re-replay after a drop) gets no direct push and no drop: the entry waits in the stream', async () => {
+    const srv = await start();
+    const phone = await connect(DEVICES.trucPhone);
+    const khanh = await connect(DEVICES.khanhPhone);
+    srv.ctx.connections.byDevice('B1')!.pushes.suspendLive();
+    const fanout: ServerEvents['message_fanout'][] = [];
+    const dropped: ServerEvents['push_dropped'][] = [];
+    srv.ctx.events.on('message_fanout', (p) => { fanout.push(p); });
+    srv.ctx.events.on('push_dropped', (p) => { dropped.push(p); });
+
+    phone.send(msg({ client_msg_id: 'cid-suspended' }));
+    const id = ((await phone.expect('msg_ack')) as MsgAckFrame).message_id;
+    await new Promise((r) => setTimeout(r, 30));
+    expect(fanout[0]).toMatchObject({ recipient_devices: ['A2', 'B1'], pushed: [] });
+    expect(dropped).toEqual([]);
+    expect(delivers(khanh)).toHaveLength(0);
+    const rows = srv.ctx.trace.rows().filter((r) => r.tag === 'queue').map((r) => r.text);
+    expect(rows).toContain(`#${id} → Khanh·phone: live pushes suspended during a re-replay, left to the stream`);
+  });
+
+  test('backpressure: a destination that does not take pushes within budget loses them to the queue, each drop reported as push_dropped; sender and other recipients unaffected', async () => {
     const srv = await start({ maxPending: 1, pushTimeoutMs: 200 });
     const phone = await connect(DEVICES.trucPhone);
     const laptop = await connect(DEVICES.trucLaptop);
@@ -249,6 +283,8 @@ describe('B2 send path: store, ids, dedup, write order, fan-out (design §2.2, �
     (srv.ctx.connections.byDevice('A2')!.socket as unknown as { _socket: Socket })._socket.cork();
     const fanout: Array<{ message_id: string; pushed: string[] }> = [];
     srv.ctx.events.on('message_fanout', ({ message, pushed }) => { fanout.push({ message_id: message.message_id, pushed }); });
+    const dropped: Array<{ device: string | undefined; message_id: string; reason: string }> = [];
+    srv.ctx.events.on('push_dropped', ({ conn, message, reason }) => { dropped.push({ device: conn.device_id, message_id: message.message_id, reason }); });
 
     phone.send(msg({ client_msg_id: 'cid-bp1', body: 'first' }));
     const first = (await phone.expect('msg_ack')) as MsgAckFrame;
@@ -269,6 +305,10 @@ describe('B2 send path: store, ids, dedup, write order, fan-out (design §2.2, �
     expect(lost).toEqual([
       `#${second.message_id} → Truc·laptop: buffer full (1 pending), left to the queue`,
       `#${first.message_id} → Truc·laptop: not taken within 200 ms, left to the queue`,
+    ]);
+    expect(dropped).toEqual([
+      { device: 'A2', message_id: second.message_id, reason: 'full' },
+      { device: 'A2', message_id: first.message_id, reason: 'timeout' },
     ]);
     expect(delivers(khanh).map((d) => d.message.body)).toEqual(['first', 'second']);
   });

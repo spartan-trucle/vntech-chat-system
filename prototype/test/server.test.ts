@@ -72,6 +72,8 @@ describe('chat server core (composition root)', () => {
     const conn = server.ctx.connections.byDevice('A1');
     expect(conn?.user_id).toBe('truc');
     expect(conn?.phase).toBe('live');
+    // No replay phase (live-first ADR): the connection is live at once; `mode` is the sync module's.
+    expect(conn?.mode).toBe('live');
     expect(server.ctx.connections.byUser('truc').map((x) => x.device_id)).toEqual(['A1']);
   });
 
@@ -104,7 +106,7 @@ describe('chat server core (composition root)', () => {
     expect(seen).toEqual(['a:A1:7-0', 'b:7-0']);
   });
 
-  test('the hello event runs before hello_ack and may mark the slow path; device_connected runs in the replay phase', async () => {
+  test('the hello event runs before hello_ack and may mark the slow path; device_connected runs on a live connection', async () => {
     const phases: string[] = [];
     server.ctx.events.on('hello', ({ conn, ack }) => {
       phases.push(`hello:${conn.phase}`);
@@ -119,13 +121,13 @@ describe('chat server core (composition root)', () => {
     const ack = await c.next('hello_ack');
     expect(ack).toMatchObject({ slow_path: true });
     await new Promise((r) => setTimeout(r, 30));
-    expect(phases).toEqual(['hello:handshake', 'connected:replay']);
+    expect(phases).toEqual(['hello:handshake', 'connected:live']);
     expect(server.ctx.connections.byDevice('A1')?.phase).toBe('live');
   });
 
   test('frames sent after hello_ack reach their handlers while device_connected listeners are still running', async () => {
-    // The sync module replays in batches and waits for the device's ack of each batch (design §4.4),
-    // so an ack must not sit behind the hello in the connection's frame chain.
+    // The replay runs beside the connection's frame chain (design §7.2, the B3 fix): an ack sent
+    // during it must not sit behind the hello, whatever a listener is waiting on.
     let settle: (() => void) | undefined;
     const acked = new Promise<void>((resolve) => { settle = resolve; });
     const order: string[] = [];
@@ -140,8 +142,31 @@ describe('chat server core (composition root)', () => {
     await c.next('hello_ack');
     c.send({ t: 'ack', up_to_stream_id: '9-0' });
     await new Promise((r) => setTimeout(r, 100));
-    expect(order).toEqual(['replay:replay', 'ack:9-0', 'drained:replay']);
+    expect(order).toEqual(['replay:live', 'ack:9-0', 'drained:live']);
     expect(server.ctx.connections.byDevice('A1')?.phase).toBe('live');
+  });
+
+  test('every connection owns a bounded push buffer sized by the push option; kill clears it and releases a waiting replay push', async () => {
+    const tuned = await createChatServer({ port: 0, push: { maxPending: 1, pushTimeoutMs: 200 } });
+    const c = new RawClient(tuned.url);
+    clients.push(c);
+    try {
+      await c.open();
+      c.send(hello(DEVICES.trucPhone));
+      await c.next('hello_ack');
+      const conn = tuned.ctx.connections.byDevice('A1')!;
+      expect(conn.pushes.pending).toBe(0);
+      expect(conn.pushes.pushLive('{"t":"presence","user_id":"khanh","state":"online"}', () => {})).toBe('accepted');
+      expect(conn.pushes.pushLive('{"t":"presence","user_id":"khanh","state":"online"}', () => {})).toBe('full');
+      const waiting = conn.pushes.pushReplay('{"t":"presence","user_id":"khanh","state":"offline"}');
+      expect(conn.pushes.waiting).toBe(1);
+      await tuned.ctx.kill(conn, 'dead');
+      expect(await waiting).toBe(false);
+      expect(conn.pushes.pending).toBe(0);
+      expect(server.ctx.connections.all().every((x) => x.pushes !== undefined)).toBe(true);
+    } finally {
+      await tuned.close();
+    }
   });
 
   test('a clean close removes the entry and the route and says whether it was the last device', async () => {
