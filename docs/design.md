@@ -41,6 +41,17 @@ edited or deleted parent shows correctly in every child (its current text, or F1
 batched key read (§2.3), so the client never fetches one parent per quote. ADR:
 `.memory/decisions/2026-11-02-reply-quote-by-id.md`.
 
+Store replica loss (decided 2026-11-02): **writes and reads go at LOCAL_QUORUM; on a
+QUORUM timeout the chat server retries once at ONE and acks.** The store has no
+primary (Cassandra, RF 3), so the failure designed for is two of a token range's three
+replicas down at once. Normal operation keeps N3 absolute. A degraded range falls to
+ONE for its conversations only and only while it is degraded, and N3 reads "absolute
+at QUORUM; during a degraded range, once replicated". A write that fails even at ONE
+is not acked: the outbox holds it and resends on backoff, and dedup at two layers
+makes the resend safe. The 300 ms + 300 ms budget is the author's number to confirm.
+§2.7 holds the failure story and the N2 statement. ADR:
+`.memory/decisions/2026-11-02-store-quorum-fallback-one.md`.
+
 ---
 
 ## 1. Connection keep-alive, disconnect detection and reconnect
@@ -120,6 +131,13 @@ connected ──(no ping 15 s | close | error)──▶ reconnecting ──(open
   the local outbox with a client-generated `client_msg_id` (UUID) and flushed on
   reconnect. The server dedups on `(sender_id, client_msg_id)` for 24 h, so a message that
   was stored but whose ack was lost is not stored twice.
+- **Dedup has a second layer on the client** (decided 2026-11-02, ADR
+  `2026-11-02-store-quorum-fallback-one.md`). The server's dedup read goes at
+  LOCAL_QUORUM and fails open on a timeout: in a degraded range it stores rather than
+  refuses the send, so the store may hold two rows for one message. The `deliver`
+  frame therefore carries `sender_id` and `client_msg_id`, and the client drops a
+  second message with the same pair. The user never sees a double; the unread count
+  may be off by one until the next open (§2.7).
 - **Resume, not restart.** The `hello` frame carries the device's `last_synced_message_id`
   cursor; the server replays everything newer from the message sync queue before
   delivering live traffic. No separate "fetch what I missed" round trip.
@@ -242,6 +260,17 @@ messages (
   edit or delete, when §8.5 brings them, touches one row. F10 forbids a parent from
   another conversation; the schema does not, so the `msg` handler rejects a `reply_to`
   whose conversation differs, and the store never checks.
+- **Consistency levels** (decided 2026-11-02, ADR
+  `2026-11-02-store-quorum-fallback-one.md`): every write and every read of this
+  table, the dedup index, the cursor tables and the summary rows goes at
+  LOCAL_QUORUM, so normal mode is R + W = 4 > RF 3 and a device reads its own writes
+  from any replica. On a QUORUM timeout the writer retries once at ONE and acks; a
+  reader serves the page at ONE the same way. Only a token range that has lost two of
+  its three replicas takes the fallback, only for the conversations hashed into it,
+  only while it is degraded. The dedup index read fails open on a timeout: the server
+  stores, because a duplicate row is less harmful than a refused send, and the
+  `deliver` frame carries `sender_id` and `client_msg_id` so the client drops the
+  double (§1.4). §2.7 has the failure story.
 
 ### 2.3 Read paths
 
@@ -334,6 +363,71 @@ separately via the object store, §F9).
 | Fetch history over the WebSocket | Ties a cacheable, bursty read path to the stateful real-time fleet; a deep scroll by one user competes with live delivery for everyone on that node. |
 | Device-only history (WhatsApp classic) | Fails F5/F6: a new device has no history and a lost phone loses it. |
 | One partition per conversation, no bucket | Unbounded partition growth; the known Cassandra failure mode for chat. |
+
+### 2.7 When the store loses replicas
+
+Decided 2026-11-02, ADR `2026-11-02-store-quorum-fallback-one.md`. Spec §5.8.2 asks
+about "the message store primary"; the store has none. Every partition lives on three
+replicas (RF 3), so the failure that threatens N2 is **two of a token range's three
+replicas down at once**: the conversations hashed into that range have no write quorum
+while the rest of the cluster is unaffected. Loss of the whole cluster or a whole
+region is a different event, deferred to spec §8.7.
+
+**The sender's view.** The chat server writes at LOCAL_QUORUM with a 300 ms budget. If
+that times out, it retries once at ONE with another 300 ms and acks on success, so the
+degraded ack lands inside the N1 p99 of 500 ms plus one retry. The bubble shows "sent"
+either way; the sender never sees an error. If even the ONE write fails (no live
+replica for the range, or the cluster down), the server does not ack: the outbox keeps
+the message, the bubble shows "sending…", and the client resends on its backoff
+(§1.4). The two 300 ms budgets are the hub's proposal; the author confirms or changes
+them here.
+
+**What N3 means now.** "An acknowledged message is never lost" is absolute at QUORUM,
+which is every message in normal operation. During a degraded range it reads "never
+lost once replicated": a message acked at ONE rests on one replica until hinted
+handoff copies it to the others. The write-order invariant of §4.2 is untouched: the
+store, at whatever level, still precedes the ack, and the ack still precedes the
+queue append.
+
+**Dedup at two layers.** The dedup index read `(sender_id, client_msg_id)` goes at
+LOCAL_QUORUM and fails open on a timeout: the server stores, because by this decision
+a duplicate is less harmful than a refused send. The `deliver` frame carries
+`sender_id` and `client_msg_id`, and the client drops a second message with the same
+pair. The user never sees a double. The store may hold two rows for a message acked
+during a degraded window, and the unread count may be off by one until the next open;
+a repair job that collapses duplicates is out of scope.
+
+**Reads.** History pages, summary rows and read cursors follow the same rule:
+LOCAL_QUORUM, falling back to ONE on timeout. Normal mode is R + W = 4 > RF, so a
+second device reads the first's writes. A page served at ONE may miss a message that
+the replay delivers later; the client dedups by `message_id` (§4.4).
+
+**Recovery.** When the lost replicas return, hinted handoff replays the writes they
+missed (default hint window 3 h). Past that window a repair of the range restores
+RF 3. No application step is needed. Operators are paged on the count of writes acked
+at ONE per minute, which is zero in normal operation.
+
+**Loss bound.** Zero in normal operation. During a degraded window on one range: the
+messages acked at ONE on that range, lost only if the single surviving replica also
+dies before hints replay. The window is bounded by replica recovery time and by the
+conversations in one range, one of ~550 nodes' worth (estimation §3.1).
+
+**N2, stated.** The send/receive path stays available through the loss of up to two
+replicas of any range, at the cost of N3 for the messages acked at ONE. Loss of all
+three replicas of a range, or of the cluster, is unavailability for the affected
+conversations: sends are held in the outbox and delivered when the store returns;
+nothing is lost on the client side. Multi-region failover is deferred to spec §8.7.
+
+Rejected (ADR): ONE for every write, always (the author's first choice, revised in the
+debate: it opens the loss window on every message at every moment, including rolling
+restarts, and breaks read-your-writes for dedup, unread and the second device, while
+the 115 k writes/s peak is trivial for the store at QUORUM and the latency difference
+is about one internal round trip); QUORUM with no fallback (a two-replica loss
+becomes "cannot send" for the affected conversations, against the availability
+priority); client dedup by `client_msg_id` only, with no QUORUM index read (every
+retry after a lost ack would store a second row in normal operation; kept as the
+second layer, not the only one); refusing the send when the dedup read times out
+(consistent with N3, inconsistent with the priority this decision sets).
 
 ---
 
@@ -847,7 +941,7 @@ ports.
 | 11 | B4 | The HTTP router is first-match, so a core test's probe route collided with the real page route; the unread count has no sender filter until the sender's own read cursor advances on store, which B5 does. | No |
 | 12 | B6 | Once every client frame type has a handler, the core's unhandled-frame path has no test probe left. | No (prototype note) |
 | 13 | B1 | One client test mixes fake and real time and fails about once in ten full-suite runs under load; the scenarios use larger budgets. | No (prototype note) |
-| 14 | A4 | N2 (availability) and N6 (security) were neither addressed nor deferred; spec §7 row 3 says seven flows where §4.2 has nine. | Already A3 item 6 in `rubric.md`; the second is a spec typo |
+| 14 | A4 | N2 (availability) and N6 (security) were neither addressed nor deferred; spec §7 row 3 says seven flows where §4.2 has nine. | N2 closed 2026-11-02 (§2.7, ADR `2026-11-02-store-quorum-fallback-one.md`); N6 stays open as A3 item 6b in `rubric.md`; the second is a spec typo |
 | 15 | B, orchestration | Agent worktrees were cut from `origin/main`, not the lane branch; every subagent brief had to open with a fast-forward onto the lane branch. | No (process note) |
 | 16 | B9, Redis | Redis refuses an `XADD` whose id is at or below the stream's top entry. The in-memory queue sorted on insert, so it hid that appends to one device's stream must be issued in message-id order; today only the equal await depth of concurrent handlers keeps them ordered. A retry of the same id is still the idempotent case of §4.2. | **Open**, §4.2 (7.9) |
 | 17 | B9, Redis | `MAXLEN ~` trims whole radix-tree nodes: the cap is a floor with node-level granularity (about 100 entries), not the exact length the in-memory adapter enforced. §4.5's "caps the pathological case" is approximate. | Noted in §4.2 and the sync-queue ADR (7.9) |
@@ -1009,6 +1103,9 @@ for the synchronous in-memory bus and clock needed a settle point and real sleep
 ## Open on the board after this section
 
 - Production runtime — deliberately undecided; the prototype is Node.js (ADR above).
+- N6 (A3 item 6b): membership checks at the history page API, the summary read and
+  the socket's `msg` frame, and one sentence on transport encryption, or an explicit
+  deferral of each. Store replica loss and N2 left this list on 2026-11-02 (§2.7).
 - Batch end on replay: `batch_end` flag or `replay_done` frame (§7.3); and whether the
   replay `ack` should advance the delivery cursor in place of §3.4's delivered receipt.
 - Presence debounce versus the client's reconnect: the relation the 5 s debounce, the

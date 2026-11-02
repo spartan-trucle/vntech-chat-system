@@ -18,7 +18,7 @@ where a device connects, flows 2 and 5):
 | load balancer | one address for all chat servers; application-level health check (socket accepted, `hello` answered), random assignment; no registry behind it (§1.4, ADR 2026-11-02) |
 | chat server | stateful: sockets, pong times, watch sets, fan-out on write |
 | Redis | routing table `route:{user}:{device}`, sync streams `sq:{device}`, presence leases and pub/sub, summaries |
-| message store | wide-column `messages`, `read_cursors`, `delivery_cursors`, dedup index |
+| message store | wide-column `messages`, `read_cursors`, `delivery_cursors`, dedup index; no primary, RF 3, LOCAL_QUORUM with one retry at ONE on timeout (§2.7, ADR 2026-11-02) |
 | object storage | regional buckets, CDN in front of group media |
 | push gateway | APNs / FCM |
 
@@ -45,21 +45,29 @@ sequenceDiagram
   A->>A: outbox append {client_msg_id (UUID), conversation_id, body}
   A->>CSA: msg {client_msg_id, conversation_id, body}
   Note over CSA: this hop assigns the ID: Snowflake message_id minted on the chat server
-  CSA->>MS: dedup lookup (sender_id, client_msg_id), 24 h index
+  CSA->>MS: dedup lookup (sender_id, client_msg_id), 24 h index, LOCAL_QUORUM
+  Note over CSA,MS: if the dedup read times out (a degraded range) the server fails open and treats the message as new (decided 2026-11-02)
   alt already stored (a retry after a lost ack)
     CSA-->>A: msg_ack {client_msg_id, original message_id}, nothing stored
-  else new
-    CSA->>MS: INSERT messages (conversation_id, bucket, message_id, sender_id, client_msg_id, body), quorum at RF 3
-    MS-->>CSA: written
+  else new, or the dedup read timed out
+    CSA->>MS: INSERT messages (conversation_id, bucket, message_id, sender_id, client_msg_id, body), LOCAL_QUORUM at RF 3, 300 ms budget
+    alt two of the range's three replicas answer (normal operation)
+      MS-->>CSA: written at QUORUM
+    else QUORUM timed out, two of three replicas down (decided 2026-11-02)
+      CSA->>MS: INSERT again at ONE, 300 ms budget
+      MS-->>CSA: written at ONE, counted for the operators' page
+      Note over A,CSA: if ONE also fails there is no ack. A keeps the message in its outbox, shows sending, and resends on backoff
+    end
     CSA-->>A: msg_ack {client_msg_id, message_id}
-    Note over A,CSA: this hop acks the sender, only after the store write. The bubble shows sent.
+    Note over A,CSA: this hop acks the sender, only after the store write at whichever level. The bubble shows sent.
     CSA->>R: SET conv:{id}:summary, conv:{id}:last
     loop every recipient device, plus A's other devices
       CSA->>R: XADD sq:{device} MAXLEN ~100000 {m: message_id, c: conversation_id}
       CSA->>R: GET route:{user}:{device}
       R-->>CSA: server_id (B is online, so a route exists)
-      CSA->>CSB: push deliver {message, stream_id}, direct, bounded per-destination buffer
-      CSB->>B: deliver {message, stream_id}
+      CSA->>CSB: push deliver {message with sender_id and client_msg_id, stream_id}, direct, bounded per-destination buffer
+      CSB->>B: deliver {message with sender_id and client_msg_id, stream_id}
+      Note over B: B drops a second deliver with the same (sender_id, client_msg_id), the client half of dedup (decided 2026-11-02)
     end
     B->>CSB: ack {up_to_stream_id} (the device advances its own cursor, the server stores nothing)
     B->>CSB: receipt delivered {conversation_id, last_delivered_id}
@@ -71,7 +79,11 @@ sequenceDiagram
 What it answers: the ID is minted on the sending chat server (§2.2, board Component 2);
 the sender is acked by that same chat server after the store write and before any
 fan-out (§4.2, write order store → ack → queue); the push to an online device is direct,
-server to server, with no queue in the hot path (board Component 3).
+server to server, with no queue in the hot path (board Component 3). The store write
+and the dedup read go at LOCAL_QUORUM; a range that has lost two of its three replicas
+gets one retry at ONE before the ack, and a write that fails even then is not acked
+(§2.7, decided 2026-11-02). The `deliver` frame carries `sender_id` and
+`client_msg_id` so the client can drop a double from a fail-open dedup read.
 
 ## Flow 2 · Send 1:1, recipient offline
 
@@ -91,7 +103,7 @@ sequenceDiagram
   participant CSB as Chat server B (after reconnect)
 
   A->>CSA: msg {client_msg_id, conversation_id, body}
-  CSA->>MS: INSERT messages (message_id minted here)
+  CSA->>MS: INSERT messages (message_id minted here), LOCAL_QUORUM, one retry at ONE on timeout as in flow 1
   MS-->>CSA: written
   CSA-->>A: msg_ack {client_msg_id, message_id}
   CSA->>R: XADD sq:{B device} {m, c}
