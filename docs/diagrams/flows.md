@@ -127,22 +127,40 @@ sequenceDiagram
   B->>CSB: hello {device_id, last_synced_message_id, list_cursor, app_state}
   CSB->>R: SET route:{B}:{device} = server_id, presence online
   Note over CSB: the connection is subscribed to live pushes first, before the replay starts. No replay phase, no flip (decided 2026-11-02)
-  par the replay, from the cursor
+  par the replay, from the cursor, XRANGE batches back to back, no ack awaited
     CSB->>R: XRANGE sq:{device} (last_synced_message_id, COUNT 100
     R-->>CSB: entries {m, c} newer than the cursor
     CSB->>MS: SELECT bodies by (conversation_id, bucket, message_id)
     MS-->>CSB: messages
-    CSB->>B: deliver {message, stream_id}, batch of 100 in stream order
-    B->>CSB: ack {up_to_stream_id}, the cursor advances on replay acks only until the marker
+    CSB->>B: deliver {message, stream_id, replay: true}, each entry of the batch
+    B->>CSB: ack {up_to_stream_id} on B's own cadence, every 100 replay frames or 500 ms (author's numbers). It persists the cursor, never a credit
+    B->>CSB: delivered {conversation_id, up_to_message_id}, after the local store write, at most one per conversation per 2 s (decided 2026-11-02)
+    CSB->>MS: delivery_cursors (conversation, B device) = max(old, up_to_message_id), no per-connection state
   and live pushes on the same socket, meanwhile
     CSA->>R: XADD sq:{B device} * {m, c}, a new message from A, Redis-assigned entry id
     CSA->>CSB: push deliver {message, stream_id}
-    CSB->>B: deliver {message, stream_id}
-    Note over B: stored, keyed by message_id. If the replay later reaches the same entry the second copy is a no-op. Its stream_id is not applied to the cursor before the marker
+    CSB->>B: deliver {message, stream_id, replay: false}
+    Note over B: stored, keyed by message_id. If the replay later reaches the same entry the second copy is a no-op. In replay mode its stream_id is not applied to the cursor
+    B->>CSB: delivered {conversation_id, up_to_message_id}, the same receipt in live mode, coalesced with the one above
   end
-  CSB->>B: end-of-replay marker (batch_end flag or replay_done frame, item 7, required since 2026-11-02)
+  CSB->>B: replay_done, no payload. Replay mode ends (decided 2026-11-02)
+  B->>CSB: delivered {conversation_id, up_to_message_id} for every conversation where the highest message_id stored differs from the highest one sent a delivered for, the resend after reconnect
   Note over B: B renders from its store sorted by message_id, never in socket arrival order, the order the store clusters by and the history page returns
-  CSB->>B: live traffic continues, each deliver carries its stream_id and the ack advances the cursor
+  CSB->>B: live traffic continues, deliver {message, stream_id, replay: false}, and B applies each stream_id to its cursor
+  Note over B,CSB: part 2, later on the same connection: a live push is dropped by the bounded per-destination buffer
+  CSA->>CSB: push deliver for a new message from A
+  Note over CSB: B's buffer is full or the push is not taken within budget: dropped. The entry is in B's stream. B cannot see a dropped push, so the server acts (decided 2026-11-02)
+  Note over CSB: live frames for this connection stop, the buffer drains. No replay_start frame, it could not be delivered now anyway
+  CSB->>R: XRANGE sq:{device} (stream_id below the dropped entry, COUNT 100, back to back until empty
+  R-->>CSB: entries from the dropped one on
+  CSB->>MS: SELECT bodies
+  MS-->>CSB: messages
+  CSB->>B: deliver {message, stream_id, replay: true}. The first one puts B back into replay mode
+  B->>CSB: ack {up_to_stream_id} on B's cadence
+  B->>CSB: delivered {conversation_id, up_to_message_id}, after the store write. The delivery cursor never moved for the dropped push, since delivered means stored on the device
+  Note over CSB: a further drop during this loop extends it. The loop ends only on an empty read
+  CSB->>B: replay_done
+  CSB->>B: live resumes, deliver {message, stream_id, replay: false}
   Note over B,CSB: offline longer than 24 h: the stream is trimmed past the cursor, no replay, each chat loads from the message store on open (slow path, flow 4 part 2)
 ```
 
@@ -152,7 +170,16 @@ with the body in the store; the recipient is notified by a push hint without the
 the stream replay (§4.3, §4.4). The replay and live pushes share the socket from the
 `hello` on: live first, then replay, no flip, so nothing appended during the replay is
 skipped; the client dedups and sorts by `message_id`, and the device cursor takes a
-live frame's entry id only after the end-of-replay marker (§4.4, decided 2026-11-02).
+live frame's `stream_id` only outside replay mode (§4.4, decided 2026-11-02). Replay mode
+begins at `hello` and ends at `replay_done`; `deliver.replay` tells the two kinds of
+frame apart, and `ack{up_to_stream_id}` persists the cursor on the client's own cadence
+and is never a flow-control credit (§4.7). Part 2 draws the one way the connection
+re-enters replay mode: a push dropped by the backpressure budget, after which the server
+re-runs the replay alone from the dropped entry and sends `replay_done` before live
+resumes (§7.8, decided 2026-11-02). Beside the ack, in both modes, B sends
+`delivered{conversation_id, up_to_message_id}` after each store write, coalesced per
+conversation: a different frame with a different key and owner, which moves the
+delivery cursor of §3.3 and never the sync cursor (§3.4, decided 2026-11-02).
 
 ## Flow 3 · Send to a group of 100
 
@@ -187,7 +214,7 @@ sequenceDiagram
       CSA->>PG: push hint, never the body
     end
   end
-  Note over CSA,CSn: a destination buffer that is full, or a push not taken within budget, is dropped. The entry is already in that device's stream, so the device catches up on its own replay. A slow recipient delays one recipient, never the sender.
+  Note over CSA,CSn: a destination buffer that is full, or a push not taken within budget, is dropped. The entry is already in that device's stream. The device cannot see the drop, so the server re-enters replay for that connection and sends replay_done before live resumes (flow 2 part 2, decided 2026-11-02). A slow recipient delays one recipient, never the sender.
   Note over CSA: 150 deliveries is the worst case, about 6 is the average (estimation §1). Fan-out on write is sized by the average, the buffer by the worst case. No threshold inside this design: 100 is the product ceiling, 10 k and above is a different design pass.
 ```
 
@@ -337,8 +364,8 @@ sequenceDiagram
   CSS->>CSR: push deliver
   CSR->>Rd: deliver {message, stream_id}
   Rd->>CSR: ack {up_to_stream_id}
-  Rd->>CSR: receipt delivered {conversation_id, last_delivered_id}, sent when the stream hands it new messages
-  CSR->>MS: delivery_cursors (conversation, device R) = max(old, new)
+  Rd->>CSR: delivered {conversation_id, up_to_message_id}, after the local store write, in live and replay mode alike, at most one per conversation per 2 s (decided 2026-11-02)
+  CSR->>MS: delivery_cursors (conversation, device R) = max(old, up_to_message_id)
   Note over MS: delivered for message N is derived: every other device's cursor is at least N. Never stored per message.
   CSR->>CSS: cursors {conversation, read, delivered}, to the members who have the conversation open
   CSS->>S: cursors

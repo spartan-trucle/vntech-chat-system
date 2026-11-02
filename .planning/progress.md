@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-02, report round 28 (item 7 decided, A3.5 to A and B10 to B; 5 A3 decisions open: 4, 5, 6b, 8, 9, plus text item 12; 300 ms budgets await the author's confirmation)
+Last updated: 2026-11-02, report round 33 (A3.6 merged 03867c7, board b1eb7e5; B10 running on B, B11 queued; ack cadence 100 frames / 500 ms to confirm; 4 A3 decisions open: 4, 5, 6b, 9, plus text item 12; 300 ms budgets await the author's confirmation)
 
 ## Epics
 
@@ -12,7 +12,7 @@ Last updated: 2026-11-02, report round 28 (item 7 decided, A3.5 to A and B10 to 
 | A1 tradeoffs.md | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
 | A2 sequence diagrams | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
 | A4 rubric run | A | 1 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
-| A3 open decisions | hub + author | 2 | decisions 1, 2, 3, 6a, 7, 10 and 11 decided (ADRs 6858647, b5f102d, 74ae209, this round); A3.3 text merged (8273ae9), A3.4 merged (3dea2d4), board updated (8d8324c); A3.5 (item 7) handed to A, B10 scenario to B; open: 4, 5, 6b, 8, 9, text item 12; 300 ms budgets in §2.7 still marked to confirm | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
+| A3 open decisions | hub + author | 2 | decisions 1, 2, 3, 6a, 7, 8, 10 and 11 decided (ADRs 6858647, b5f102d, 74ae209, this round); A3.3 text merged (8273ae9), A3.4 merged (3dea2d4), board updated (8d8324c); A3.5 merged (955decf), board updated (72f905e); A3.6 merged (03867c7), board updated (b1eb7e5); B10 running on B, B11 queued after it; open: 4, 5, 6b, 9, text item 12; 300 ms budgets in §2.7 still marked to confirm | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
 | B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
 | B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
@@ -43,6 +43,8 @@ Last updated: 2026-11-02, report round 28 (item 7 decided, A3.5 to A and B10 to 
 | A3.2 reply quoting text | fb242cd (board b0088d2) | 2026-11-02 |
 | A3.3 store replica loss text | 8273ae9 (board a76e0f5) | 2026-11-02 |
 | A3.4 replay-to-live handoff and append order text | 3dea2d4 (board 8d8324c) | 2026-11-02 |
+| A3.5 end of replay as a mode boundary text | 955decf (board 72f905e) | 2026-11-02 |
+| A3.6 delivered receipt text | 03867c7 (board b1eb7e5) | 2026-11-02 |
 
 ## Surprises collected for C2
 
@@ -77,7 +79,7 @@ moves a rubric row.
 | 1 | Service discovery: what answers `GET /chat-servers` (least-loaded healthy node) and what watches liveness and runs `mark-all-offline(server_id)`; etcd / Consul / orchestrator | §5.2.2, §5.8.1 | **decided 2026-11-02**: no registry; load balancer with app-level health check, random assignment; lease is the only cleanup. ADR `2026-11-02-no-service-registry.md`; design text in A3.1 (lane A) |
 | 2 | Reply quoting: excerpt denormalized into the reply row vs resolved by ID on render; what shows when the parent is deleted | §5.3.5, F10 | **decided 2026-11-02**: resolved by ID, no excerpt; page API returns referenced parents in one batch. ADR `2026-11-02-reply-quote-by-id.md`; text in A3.2 (lane A) |
 | 3 | Message-store primary failure: what the sender sees, how long the ack path waits, what the outbox does, bound on loss, recovery steps | §5.8.2, N2 | **decided 2026-11-02**: no primary; writes LOCAL_QUORUM with one retry at ONE; outbox holds unacked sends; dedup at two layers; hinted handoff then repair. ADR `2026-11-02-store-quorum-fallback-one.md`; text in A3.3 (lane A) |
-| 4 | Backpressure: move the board's bounded per-destination buffer + drop-to-stream rule into `design.md` with its budget (text, not a new decision) | §5.8.3 | open |
+| 4 | Backpressure: move the board's bounded per-destination buffer + drop-to-stream rule into `design.md` with its budget (text, not a new decision) | §5.8.3 | open; **input from A3.5**: the board (Component 3) and tradeoffs 5.8.3 put the bounded buffer on the sending server per recipient server, the prototype (pushBuffer.ts, design §7.8) puts it on the socket to the device; the item 7 re-replay needs the drop seen by the server holding the device's socket, so the write-up must settle the placement |
 | 5 | Observability: the five metrics to page on | §5.8.4 | open |
 | 6a | N2 availability statement for send/receive | N2 | **decided 2026-11-02** with item 3: available through loss of two replicas of any range; three-replica or cluster loss holds sends in the outbox; multi-region deferred (§8.7) |
 | 6b | N6: membership check at the history API, summary read and `msg` frame, plus one TLS sentence, or explicit deferral | N6 | open |
@@ -89,7 +91,7 @@ Also flagged by A4: spec §7 row 3 says "seven flows" but §4.2 has nine; a spec
 | # | Decision needed | Closes | Status |
 |---|---|---|---|
 | 7 | Replay batch end | design §4.7 | **decided 2026-11-02**: no `batch_end`; ack persists the cursor only, never a credit; `deliver.replay` flag plus one `replay_done` frame as a mode boundary; on a dropped push the server re-replays alone from the dropped entry. ADR `2026-11-02-replay-mode-boundary.md`; text in A3.5 (lane A), scenario in B10 (lane B); ack cadence numbers to confirm |
-| 8 | Delivery cursor: advance it on the replay ack instead of §3.4's separate delivered receipt | design §3.4, §4.4 | open; the item 7 ADR requires it be decided on the replay ack |
+| 8 | Delivery cursor | design §3.4, §4.4 | **decided 2026-11-02**: delivered = device stored it; client-sent `delivered{conversation_id, up_to_message_id}` in both modes, coalesced 2 s like the read receipt, resent after reconnect for conversations whose stored id is ahead of the last receipt; server `max` into delivery_cursors, no per-connection state; push-to-socket advance withdrawn; ack stays sync-only. ADR `2026-11-02-delivered-receipt-device-stored.md`; text in A3.6 (lane A), prototype in B11 (lane B, after B10) |
 | 9 | Debounce versus reconnect: `dead + debounce` (11 + 5 = 16 s) must exceed `mirror + first backoff` (15 + 1 = 16 s) by a margin; today it fails by ~1.3 s. Pick the relation and the numbers | design §5.2, §1.4 | open |
 
 ### Added by B9 (real Redis)

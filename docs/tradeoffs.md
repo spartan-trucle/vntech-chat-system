@@ -384,10 +384,9 @@ Not a spec bullet: a B9 finding on 5.5.2 (design §7.9), decided 2026-11-02.
   makes the second copy a no-op. Frames are not in `message_id` order on the socket
   during the replay; the client renders from its store sorted by `message_id`, the
   order the message store clusters by and the history page returns. Cursor rule: the
-  device cursor advances on replay batch acks only until the end-of-replay marker
-  (design §7.3, now required); a live frame before the marker is stored but its entry
-  id is not applied; after it, each live frame carries its entry id and advances the
-  cursor as before. Design §4.4; ADR `2026-11-02-live-first-replay-xadd-auto-id.md`.
+  device cursor advances on replay acks only until `replay_done` (5.5.2c); a live frame
+  in replay mode is stored but its entry id is not applied; after it, each live frame
+  carries its entry id and advances the cursor as before. Design §4.4; ADR `2026-11-02-live-first-replay-xadd-auto-id.md`.
 - **Rejected:** one more `XRANGE` after the flip, with the client deduping the overlap
   (keeps the window structure and the replay phase, adds a read on every reconnect,
   which is the reconnect-storm path, and still leaves a smaller window between that
@@ -429,6 +428,46 @@ Not a spec bullet: a B9 finding on 5.5.2 (design §7.9), decided 2026-11-02.
   where retries happen, not on every append.
 - **Number:** estimation §3.3: 700 k appends/s at peak is what a per-stream lock would
   sit on; a `SET NX` per entry would double Redis writes to ~1.4 M/s at peak.
+
+### 5.5.2c End of replay
+
+Not a spec bullet: board item 7, found in B3 (design §7.3), decided 2026-11-02.
+
+- **Chosen:** no `batch_end`. The ack persists the cursor and nothing else, never a
+  flow-control credit; the server runs its `XRANGE` batches back to back under the
+  bounded per-destination buffer. `deliver` gains a boolean `replay` field (true for
+  frames pushed by the `XRANGE` loop, false for live pushes) and one new server frame,
+  `replay_done`, carries nothing but its type. Replay mode begins at `hello` and at the
+  first `replay: true` frame after a `replay_done`, and ends at `replay_done`. In replay
+  mode the client acks `ack{up_to_stream_id}` on its own cadence (every 100 replay
+  frames or 500 ms, the author's numbers to confirm) and does not apply live frames'
+  `stream_id` to its cursor; outside it does, as today. When the backpressure budget
+  drops a push, the server stops queuing live frames for that connection, lets the
+  buffer drain, re-runs the `XRANGE` loop alone from the dropped entry until empty,
+  sends `replay_done`, then resumes live. The initial replay runs alongside live
+  (5.5.2a); a backpressure replay runs alone. Design §4.4, §4.7, §7.8; ADR
+  `2026-11-02-replay-mode-boundary.md`.
+- **Rejected:** a `batch_end` flag on the last `deliver` of each batch (leaks the
+  server's read granularity into the protocol, cannot say that a batch is the last
+  one, and is only needed if the ack is a credit); the ack as a flow-control credit the
+  server waits for before the next `XRANGE` (re-creates the "replay awaits ack" shape
+  that deadlocked in B3 and duplicates the bounded buffer); a single `replay_done`
+  after the initial replay only (leaves the dropped-push gap, so the cursor can pass an
+  undelivered entry); closing the socket on a dropped push and letting the reconnect
+  replay from the cursor (turns every slow moment into a reconnect, the storm §1.3 is
+  built to avoid, and the client has already applied live `stream_id`s received before
+  the drop, so the reconnect replay would skip the dropped entry); a `replay_start`
+  frame at the drop (cannot be delivered when the buffer is full, and the first
+  `replay: true` frame already carries the information).
+- **Why:** the client needs two things only, to persist its cursor and to know when
+  the replay has ended, and the ack is cumulative, so it can be sent on any cadence; a
+  late ack over-replays, which §4.7 allows. A single end marker is not enough because
+  the live path is not gapless: the device cannot see a dropped push, so only the
+  server can close that gap, and re-entering replay for one connection is cheaper than
+  a reconnect. "End of replay" becomes a boundary the connection can cross many times.
+- **Number:** none decides it; the ack cadence (100 frames or 500 ms) is the author's
+  to confirm, and a chronically slow device costs its own repeated `XRANGE` reads,
+  bounded by its drain rate, not the fleet's.
 
 ### 5.5.3 Exactly-once vs at-least-once, and client-side dedup
 
@@ -503,8 +542,8 @@ Not a spec bullet: a B9 finding on 5.5.2 (design §7.9), decided 2026-11-02.
   members who currently have that conversation open, and to the reader's own other
   devices (which clear their badge). Members not looking get the cursor when they
   next open the chat, from the partition. Delivered receipts follow the same shape
-  keyed by device. Sender-side status is derived from the cursors, never stored.
-  Design §3.3–§3.5.
+  keyed by device (5.6.3a). Sender-side status is derived from the cursors, never
+  stored. Design §3.3–§3.5.
 - **Rejected:** one receipt row per message per member; push every receipt to every
   member; per-device read cursor; a stored unread counter (all §3.7).
 - **Why:** reading is monotonic, so "how far has each member read" is one number
@@ -514,6 +553,44 @@ Not a spec bullet: a B9 finding on 5.5.2 (design §7.9), decided 2026-11-02.
 - **Number:** estimation §3.4: receipt writes ≈ 25 % of deliveries after coalescing,
   175 k/s peak, to tiny partitions; cursor rows 250 GB + 375 GB. Design §3.2's
   15 000 frames per message is the figure that killed the per-message shape.
+
+### 5.6.3a Delivered receipt
+
+Not a spec bullet: board item 8, from B5 finding 10 (design §7.3), decided 2026-11-02.
+
+- **Chosen:** *delivered* means the device stored the message in its local store. The
+  client sends `delivered{conversation_id, up_to_message_id}` in replay mode and in
+  live mode alike, after the store write, coalesced to at most one per conversation
+  per 2 s, the read receipt's rule and number. The server runs
+  `SET last_delivered_id = max(last_delivered_id, up_to_message_id)` on
+  `delivery_cursors` and keeps no per-connection state and no stream-id mapping. The
+  prototype's push-to-socket advance is withdrawn. The replay `ack{up_to_stream_id}`
+  is unchanged and stays the sync cursor only (5.5.2c): the two frames have different
+  keys and owners, one Redis stream id per device owned by the device, one Snowflake
+  per conversation per device owned by the server for F8. Resend: the client keeps per
+  conversation the highest `message_id` stored and the highest it sent a `delivered`
+  for, and after `replay_done` on a new connection sends one `delivered` for every
+  conversation where the two differ. Derived status (design §3.3) is unchanged. Design
+  §3.4, §4.4; ADR `2026-11-02-delivered-receipt-device-stored.md`.
+- **Rejected:** advancing the delivery cursor at the push-to-socket moment (the
+  prototype, B5 finding 10: overstates delivery for a dropped push, for as long as the
+  re-replay takes or, if the connection dies first, until the next reconnect);
+  advancing it on the replay ack only (the §7.3 proposal: the ack exists only in replay
+  mode, so an online recipient receiving live pushes produces no delivered signal at
+  all); extending the ack to both modes with a server-side map from `stream_id` to
+  `(conversation_id, message_id)` per connection (one frame type, but state that
+  belongs to nobody when the server dies, and the client cannot resend because it keeps
+  nothing per conversation); delivered at the moment the socket flush is confirmed (TCP
+  accepted is not stored: a device that crashes after the read shows delivered for a
+  message it will replay later).
+- **Why:** the author's definition excludes every server-side signal, so a client-sent
+  one in both modes is necessary, and a receipt keyed the way `delivery_cursors` is
+  keyed needs no mapping and no per-connection state on the server. `max` makes a lost
+  receipt self-healing and the resend rule covers the coalescing window. The ack keeps
+  its single meaning from item 7.
+- **Number:** estimation §3.4 already budgets ≈ 175 k receipt writes/s at peak after
+  coalescing, and this receipt was in that number; the client's cost is two integers
+  per conversation in a store that already sorts by `message_id`.
 
 ## 5.7 Presence
 
@@ -630,10 +707,13 @@ Not a spec bullet: a B9 finding on 5.5.2 (design §7.9), decided 2026-11-02.
 
 - **Chosen (on the board, not yet in `design.md`):** a bounded per-destination buffer
   on the sending chat server's push path. If a recipient server does not take the
-  push within budget, the message stays in that device's stream and the device
-  catches up on its own through the normal replay; a slow recipient is a delay for
-  one recipient, not a stall for the sender. Board Component 3; the roadmap routes
-  the `design.md` write-up to A3.
+  push within budget, the message stays in that device's stream; a slow recipient is
+  a delay for one recipient, not a stall for the sender. Board Component 3; the
+  roadmap routes the `design.md` write-up to A3. What happens after the drop was
+  decided 2026-11-02 (5.5.2c): the device cannot see a dropped push, so "the device
+  catches up on its own" is withdrawn; the server stops queuing live frames for that
+  connection, lets the buffer drain, re-runs the `XRANGE` loop alone from the dropped
+  entry until empty, sends `replay_done`, then resumes live (design §4.4, §7.8).
 - **Rejected:** a durable queue in the hot path to absorb the burst (Kafka in the hot
   path, board Component 3); unbounded buffering (implied by "bounded").
 - **Why:** the sync stream already holds every undelivered message, so the push is
