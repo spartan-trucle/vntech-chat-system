@@ -115,8 +115,9 @@ store; this decision makes that the contract rather than an implementation detai
   ids is replaced by the retry-path tail read.
 - Design §4.4 states the live-first sequencing, the client sort rule and the cursor
   rule; flow 2 in `docs/diagrams/flows.md` shows live subscription before replay.
-- The `deliver` frame (§6.2) carries the queue entry id so the cursor can advance on
-  live traffic after replay ends.
+- The `deliver` frame carries the queue entry id (`stream_id`, as flows 1, 3 and 6 and
+  the prototype already show; design.md has no frame catalog and its §6.2 is media
+  upload) so the cursor can advance on live traffic after replay ends.
 - Item 7 (end-of-replay marker) is decided with this cursor rule as its requirement.
 - The prototype adds a scenario: a message appended during replay is delivered once to
   the store, and the cursor never passes an undelivered entry.
