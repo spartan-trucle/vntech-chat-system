@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-02, report round 16 (service discovery ADR on main 6858647; lane A writing it into design, tradeoffs, flows as A3.1; B9 in flight)
+Last updated: 2026-11-02, report round 17 (A3.1 on lane A 16276cc and B9 on lane B a639e71, both handed to C; three new design questions from B9)
 
 ## Epics
 
@@ -12,7 +12,7 @@ Last updated: 2026-11-02, report round 16 (service discovery ADR on main 6858647
 | A1 tradeoffs.md | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
 | A2 sequence diagrams | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
 | A4 rubric run | A | 1 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
-| A3 open decisions | hub + author | 2 | decision 1 ADR on main (6858647); A3.1 design text in lane A; 8 more open | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
+| A3 open decisions | hub + author | 2 | decision 1 ADR on main (6858647); A3.1 design text done on lane A (16276cc), in review (C); 8 more open | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
 | B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
 | B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
@@ -23,8 +23,8 @@ Last updated: 2026-11-02, report round 16 (service discovery ADR on main 6858647
 | B7 media stub | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ d7ea3ea | 133 passed (lane) | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
 | B3 sync queue replay | B | 3 | merged (806a9ec) | claude/b-prototype-297ab9 @ 27365ec | 242 passed (lane, 3 runs), 212 alone | core defect: per-connection frame chain held acks behind hello during replay; fixed in core. Client acks on a heuristic (batch size or 20 ms gap) since nothing on the wire marks batch end | none |
 | B8 scenario suite | B | 4 | merged (3505098) | claude/b-prototype-297ab9 @ 252f739 | 258 passed (2 runs); scenarios 6/6 fake time and S1+S5 on real timers | S1: server debounce expiry (t+11+5) coincides with the client's first reconnect (15+1), watcher sees offline then online in the same second; 250 queued messages ≈ 1500 trace rows, near the 2000 cap | none |
-| B9 real Redis | B | 5 (optional) | in_progress (subagent, own worktree; Docker Redis on port 6399; adapters for sync queue, route table, presence store, presence bus; B0 contract tests against both implementations) | claude/b-prototype-297ab9 | | | none |
-| C1 integrate (per epic) | C | continuous | done for every B and A epic; idle until A3 produces text | main @ 82c53d1 | 258 passed + scenarios 6/6 on merged tree | none | none |
+| B9 real Redis | B | 5 (optional) | done on lane (a639e71), in review (C) | claude/b-prototype-297ab9 @ a639e71 | 258 passed + 37 skipped without Redis; 34 passed + 3 expected failures on Docker Redis | Redis rejects XADD below the stream's top id; MAXLEN ~ is a floor; replay→live handoff has a real window under I/O (kept as an expected-failure e2e test) | none |
+| C1 integrate (per epic) | C | continuous | reviewing A3.1 (lane A 16276cc) and B9 (lane B range 252f739..a639e71) | main @ 1a38936 | | | |
 | C2 retrospective | C | 4 | done (82c53d1) | main | n/a | 15 findings in design.md §7, six written back in place, four ADRs amended, board section, README and memory links | three questions for the author, listed below |
 
 ## Merged to main
@@ -55,6 +55,10 @@ Last updated: 2026-11-02, report round 16 (service discovery ADR on main 6858647
 | B3 | ack-only cursor advance (design §4.7) leaves the client acking on a heuristic (batch size or a 20 ms gap) because no frame marks a batch end; the design should name a batch-end marker or an explicit replay_done frame |
 | B3 | with real Redis the "empty XRANGE then switch to live" step needs one more XRANGE after the switch to close the race (for B9) |
 | B1 | S1 round-trip test is flaky under full-suite load (1 in ~8), mixes fake and real time; left for B8 |
+| B9 | Redis refuses an `XADD` whose id is at or below the stream's top entry; idempotent retries of the same id still work, but fan-out must append to each device's stream in message-id order, which today only equal await depth of concurrent handlers guarantees. Design §4.2's "client-chosen ID derived from the Snowflake" needs an ordering rule or a per-stream serialisation |
+| B9 | `MAXLEN ~` is a floor with node-level granularity, not the exact cap the in-memory adapter enforced; design §4.5's "caps the pathological case" is approximate |
+| B9 | replay-to-live handoff has a real window under I/O: a message appended between the last empty `XRANGE` and the switch to live is neither replayed nor pushed until the next reconnect; the in-memory adapter hid it. Two fix options are in lane B's hand-over note; a design question, not decided |
+| B8, B1 | two load-sensitive tests (S1 round trip, S5 fake-time scenario) each failed once under full-suite load and passed on rerun |
 | B8 | S1 timing coincidence: server-side pending-offline expires at t+16 s (dead at t+11 s plus 5 s debounce) exactly when the client's first reconnect lands (15 s mirror rule plus 1 s backoff), so a watcher sees offline then online within the same second. Design §5.2's 5 s debounce and §1.4's 15 s mirror rule were sized independently; the retrospective should ask whether the debounce should exceed mirror + first backoff |
 | B7 | the roadmap's `msg` frame omitted `media_size`, `media_mime`, `sha256` from design §6.2; the prototype followed the roadmap and left the row's media columns null. Lesson for the retrospective: the roadmap must quote the design's frame, not paraphrase it |
 
@@ -81,3 +85,10 @@ Also flagged by A4: spec §7 row 3 says "seven flows" but §4.2 has nine; a spec
 | 7 | Replay batch end: a `batch_end` flag on the last deliver of a batch, or a `replay_done` frame, so the client stops acking on a heuristic | design §4.7 | open |
 | 8 | Delivery cursor: advance it on the replay ack instead of §3.4's separate delivered receipt | design §3.4, §4.4 | open |
 | 9 | Debounce versus reconnect: `dead + debounce` (11 + 5 = 16 s) must exceed `mirror + first backoff` (15 + 1 = 16 s) by a margin; today it fails by ~1.3 s. Pick the relation and the numbers | design §5.2, §1.4 | open |
+
+### Added by B9 (real Redis)
+
+| # | Decision needed | Closes | Status |
+|---|---|---|---|
+| 10 | Replay-to-live handoff: close the window between the last empty `XRANGE` and the switch to live (one more `XRANGE` after subscribing to live, or buffer live pushes during replay and dedup); pick one and draw it in §4.4 | design §4.4 | open |
+| 11 | Per-stream append ordering: Redis Streams reject out-of-order ids, so either serialise appends per device stream, or mint stream ids from Redis (`*`) and keep the message id in the entry only | design §4.2 | open |
