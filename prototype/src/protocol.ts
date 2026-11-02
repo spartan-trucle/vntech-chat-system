@@ -3,7 +3,13 @@
  * §4.2, §5.3). Every frame is one JSON text message with a discriminator `t`.
  *
  * IDs are decimal Snowflake strings (src/ids.ts). Stream ids are the sync-queue entry
- * ids (`<message_id>-0`, see src/ports/SyncQueue.ts). Timestamps are epoch milliseconds.
+ * ids the store assigned (`<ms>-<seq>`, see src/ports/SyncQueue.ts). Timestamps are epoch
+ * milliseconds.
+ *
+ * Replay-mode boundary (ADR 2026-11-02): `deliver.replay` says whether the frame came from
+ * the server's replay loop (`true`) or is a live push (`false`); `replay_done` closes a
+ * replay. The client applies a live frame's `stream_id` to its cursor only outside replay
+ * mode; inside it the cursor moves by `ack{up_to_stream_id}` alone.
  */
 
 import type { MessageId } from './ids.js';
@@ -100,7 +106,15 @@ export interface MsgAckFrame {
 export interface DeliverFrame {
   t: 'deliver';
   message: Message;
+  /** The entry id in the device's sync queue; the cursor the device acks or applies. */
   stream_id: StreamId;
+  /** `true` from the replay loop (`XRANGE`), `false` for a live push (replay-mode ADR). */
+  replay: boolean;
+}
+
+/** End of a replay: the next live frame's `stream_id` may advance the cursor again. */
+export interface ReplayDoneFrame {
+  t: 'replay_done';
 }
 
 export interface ServerReceiptFrame {
@@ -123,7 +137,7 @@ export interface ErrorFrame {
   message: string;
 }
 
-export type ServerFrame = HelloAckFrame | MsgAckFrame | DeliverFrame | ServerReceiptFrame | PresenceFrame | ErrorFrame;
+export type ServerFrame = HelloAckFrame | MsgAckFrame | DeliverFrame | ReplayDoneFrame | ServerReceiptFrame | PresenceFrame | ErrorFrame;
 
 export type Frame = ClientFrame | ServerFrame;
 export type ClientFrameType = ClientFrame['t'];
@@ -187,7 +201,8 @@ const clientShapes: Record<ClientFrameType, Shape> = {
 const serverShapes: Record<ServerFrameType, Shape> = {
   hello_ack: { server_time: { type: 'number' }, slow_path: { type: 'boolean', optional: true } },
   msg_ack: { client_msg_id: { type: 'string' }, message_id: { type: 'string' } },
-  deliver: { message: { type: 'object' }, stream_id: { type: 'string' } },
+  deliver: { message: { type: 'object' }, stream_id: { type: 'string' }, replay: { type: 'boolean' } },
+  replay_done: {},
   receipt: { conversation_id: { type: 'string' }, user_id: { type: 'string' }, last_read_id: { type: 'string' } },
   presence: {
     user_id: { type: 'string' },

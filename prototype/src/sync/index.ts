@@ -1,35 +1,41 @@
 /**
- * B3 · sync queue and replay (design §4.2, §4.4, §4.7; scenario S2).
+ * B3 · sync queue and replay (design §4.2, §4.4, §4.7; scenario S2), rewritten by B10 for
+ * the live-first and replay-mode ADRs (2026-11-02; scenario S7).
  *
  * Third step of the write order: after B2 has stored the row and acked the sender, the
- * message id is appended to the stream of every recipient device (`XADD sq:{device}`).
- * On `hello` the device's cursor decides between replay and the slow path; the replay
- * drains the stream in batches of 100 before the connection goes live, each batch waited
- * on the device's `ack{up_to_stream_id}`. The ack is the only thing that moves the cursor,
- * the device keeps it, the server stores nothing (design §4.7).
+ * message is appended to the stream of every recipient device (`XADD sq:{device} … *`, the
+ * store assigns the entry id). On `hello` the device's cursor decides between replay and the
+ * slow path. The core subscribes the connection to live pushes first (it is `live` the moment
+ * `hello_ack` is sent); then the loop below runs `XRANGE (cursor + COUNT 100` until an empty
+ * batch, pushing each entry as `deliver{replay: true}`, and sends `replay_done`. It never
+ * waits for an ack: the ack handler traces and persists nothing (the device keeps its cursor,
+ * design §4.7); the bounded per-destination buffer is the only flow control.
  *
- * Waiting for the ack: the core runs `device_connected` beside the connection's frame
- * chain, not inside it, so acks sent during the replay reach `ctx.onFrame('ack')` while the
- * drain is waiting; the handler settles the per-connection waiter below.
+ * Backpressure (replay-mode ADR): when the budget drops a live push to a connection, live
+ * pushes to it are suspended, the buffer drains, and the same loop runs alone from the
+ * dropped entry (`XRANGE (<id just below it>`) until an empty read, then `replay_done`, then
+ * live resumes. A further drop during that loop lowers its start; the loop ends only on an
+ * empty read. The connection's `mode` is `replay` while a loop runs; it is this module's.
+ *
+ * Retry path (design §4.2): an `XADD` that times out is followed by a tail read
+ * (`XREVRANGE … COUNT 100`); the append is skipped if the message id is there, retried
+ * once otherwise. Best effort: the client's dedup by `message_id` is the guarantee.
  */
 
-import { SNOWFLAKE_EPOCH_MS, type MessageId } from '../ids.js';
-import { compareStreamIds, streamIdOf } from '../ports/index.js';
-import type { DeviceId, StreamId } from '../protocol.js';
+import { compareStreamIds, streamIdJustBelow, XaddTimeout, type StreamEntryBody } from '../ports/index.js';
+import { encodeFrame, type DeviceId, type StreamId } from '../protocol.js';
 import type { Connection, ServerContext } from '../server.js';
 
 export interface SyncOptions {
-  /** `XRANGE … COUNT`: entries per replay batch, one ack per batch (design §4.2). */
+  /** `XRANGE … COUNT`: entries per replay read (design §4.2). */
   batchSize: number;
-  /** How long a replay waits for the device's ack of a batch before giving up on it. */
-  ackTimeoutMs: number;
   /** Sweeper period: `XTRIM MINID` on every stream (design §4.2, hourly). */
   sweepMs: number;
   /** Retention window the sweeper trims to (design §4.5, 24 h). */
   windowMs: number;
 }
 
-export const DEFAULT_SYNC_OPTIONS: SyncOptions = { batchSize: 100, ackTimeoutMs: 5000, sweepMs: 3_600_000, windowMs: 86_400_000 };
+export const DEFAULT_SYNC_OPTIONS: SyncOptions = { batchSize: 100, sweepMs: 3_600_000, windowMs: 86_400_000 };
 
 /** `ctx.moduleOptions['sync']`, with defaults for whatever the caller left out. */
 export function resolveSyncOptions(raw: unknown): SyncOptions {
@@ -37,17 +43,21 @@ export function resolveSyncOptions(raw: unknown): SyncOptions {
   return { ...DEFAULT_SYNC_OPTIONS, ...given };
 }
 
-const TIMESTAMP_SHIFT = 22n; // 10 worker bits + 12 sequence bits (src/ids.ts)
+/** The retry path's tail read, `XREVRANGE … COUNT 100` (design §4.2). */
+const TAIL_COUNT = 100;
 
-/** The Snowflake id at `ms` (worker 0, sequence 0): every id minted at or after `ms` is ≥ it. */
-export function idAt(ms: number): MessageId {
-  const sinceEpoch = Math.max(0, Math.floor(ms) - SNOWFLAKE_EPOCH_MS);
-  return (BigInt(sinceEpoch) << TIMESTAMP_SHIFT).toString(10);
+/** The sweeper's `MINID` for a window ending at `ms`: every entry the store minted at or after `ms` is at or above `<ms>-0`. */
+export function trimBoundaryAt(ms: number): StreamId {
+  return `${Math.max(0, Math.floor(ms))}-0`;
 }
 
-const seconds = (ms: number): string => `${Math.round(ms / 100) / 10} s`;
-
-type AckWait = 'acked' | 'timeout' | 'closed';
+/** One replay loop in flight for a connection. */
+interface Loop {
+  /** Lowered by a drop while the loop runs: the next read restarts from here (replay-mode ADR). */
+  floor: StreamId | null;
+  /** True once live pushes are suspended for this loop (a backpressure re-replay). */
+  alone: boolean;
+}
 
 export function registerSync(ctx: ServerContext): () => void {
   const opts = resolveSyncOptions(ctx.moduleOptions['sync']);
@@ -59,18 +69,30 @@ export function registerSync(ctx: ServerContext): () => void {
   const lastTrimmedId = new Map<DeviceId, StreamId>();
   /** Cursor to replay from, decided on `hello`, consumed on `device_connected`. */
   const replayFrom = new Map<string, StreamId>();
-  /** Replays in flight, by connection: the ack handler feeds them, a disconnect aborts them. */
-  const inFlight = new Map<string, { onAck: (sid: StreamId) => void; abort: () => void }>();
-
-  const traceAck = (conn: Connection, sid: StreamId): void => {
-    ctx.trace.add('queue', `${conn.name} ack sid=${sid} (device-owned cursor; server stores nothing)`);
-  };
+  /** Replay loops in flight, by connection. */
+  const loops = new Map<string, Loop>();
 
   // ---- append: third in the write order, after the sender's ack (design §4.2) ----
-  const offAcked = ctx.events.on('message_acked', async ({ message, recipient_devices }) => {
-    const id = streamIdOf(message.message_id);
+  const append = async (device: DeviceId, body: StreamEntryBody): Promise<StreamId> => {
+    try {
+      return await queue.xadd(device, body);
+    } catch (e) {
+      if (!(e instanceof XaddTimeout)) throw e;
+      const tail = await queue.xrevrange(device, TAIL_COUNT);
+      const present = tail.find((entry) => entry.m === body.m);
+      if (present) {
+        ctx.trace.add('queue', `XADD sq:${device} #${body.m} timed out → XREVRANGE tail: present as ${present.id}, append skipped`);
+        return present.id;
+      }
+      ctx.trace.add('queue', `XADD sq:${device} #${body.m} timed out → XREVRANGE tail: absent, retried`);
+      return queue.xadd(device, body);
+    }
+  };
+
+  const offAcked = ctx.events.on('message_acked', async ({ message, recipient_devices, queued }) => {
+    const body: StreamEntryBody = { m: message.message_id, c: message.conversation_id };
     for (const device of recipient_devices) {
-      await queue.xadd(device, { id, m: message.message_id, c: message.conversation_id });
+      queued.set(device, await append(device, body));
       knownDevices.add(device);
     }
     if (recipient_devices.length > 0) armSweeper();
@@ -101,51 +123,32 @@ export function registerSync(ctx: ServerContext): () => void {
     replayFrom.set(conn.id, cursor);
   });
 
-  // ---- replay: drain the stream in batches before live traffic (design §4.4) ----
-  const replay = async (conn: Connection, cursor: StreamId): Promise<void> => {
+  // ---- the replay loop (design §4.4; replay-mode ADR) ----
+  /**
+   * `XRANGE (after + COUNT n` until an empty read, each entry pushed as `deliver{replay: true}`
+   * through the bounded buffer (waiting for room, never dropping), then `replay_done`. `alone`
+   * is a backpressure re-replay: live pushes are already suspended and the buffer is let to
+   * drain first; they resume after `replay_done` is on the wire.
+   */
+  const replay = async (conn: Connection, from: StreamId, alone: boolean): Promise<void> => {
     const device = conn.device_id as DeviceId;
-    const acked: { last: StreamId | null } = { last: null };
-    let waiter: { need: StreamId; settle: (how: AckWait) => void } | null = null;
-    let closed = false;
-
-    const onAck = (sid: StreamId): void => {
-      if (acked.last === null || compareStreamIds(sid, acked.last) > 0) acked.last = sid;
-      if (waiter && compareStreamIds(acked.last, waiter.need) >= 0) {
-        const w = waiter;
-        waiter = null;
-        w.settle('acked');
-      }
-    };
-    const abort = (): void => {
-      closed = true;
-      const w = waiter;
-      waiter = null;
-      w?.settle('closed');
-    };
-    const waitForAck = (need: StreamId): Promise<AckWait> => {
-      if (closed) return Promise.resolve('closed');
-      if (acked.last !== null && compareStreamIds(acked.last, need) >= 0) return Promise.resolve('acked');
-      return new Promise<AckWait>((resolve) => {
-        const pending = { need, settle: (how: AckWait): void => { ctx.timers.clearTimeout(timer); resolve(how); } };
-        const timer = ctx.timers.setTimeout(() => {
-          if (waiter !== pending) return; // already settled by an ack or a close
-          waiter = null;
-          resolve('timeout');
-        }, opts.ackTimeoutMs);
-        waiter = pending;
-      });
-    };
-
-    inFlight.set(conn.id, { onAck, abort });
+    const loop: Loop = { floor: null, alone };
+    loops.set(conn.id, loop);
+    conn.mode = 'replay';
+    let after = from;
+    let total = 0;
     try {
-      let after = cursor;
-      for (let batchNo = 0; ; batchNo += 1) {
+      if (alone) await conn.pushes.drained();
+      for (;;) {
+        if (conn.closed) return;
+        if (loop.floor !== null) {
+          if (compareStreamIds(loop.floor, after) < 0) after = loop.floor;
+          loop.floor = null;
+        }
         const batch = await queue.xrange(device, after, opts.batchSize);
         if (batch.length === 0) {
-          // Return at once: the core flips the connection to `live` in this same microtask drain,
-          // so nothing can be appended in between without being pushed live.
-          if (batchNo === 0) ctx.trace.add('queue', `sq:${device} nothing past cursor ${after}; live traffic starts`);
-          return;
+          if (loop.floor !== null) continue; // a drop landed during the read: start again from its floor
+          break;
         }
         ctx.trace.add('queue', `XRANGE sq:${device} (${after} + → ${batch.length} entries, join bodies from the store`);
         const rows = await ctx.ports.messages.getMany(batch.map((e) => ({ conversation_id: e.c, message_id: e.m })));
@@ -153,39 +156,72 @@ export function registerSync(ctx: ServerContext): () => void {
         for (const entry of batch) {
           const message = byId.get(entry.m);
           if (!message) continue; // the port skips missing rows; an id without a row is nothing to deliver
-          if (!ctx.send(conn, { t: 'deliver', message, stream_id: entry.id })) return;
+          const frame = encodeFrame({ t: 'deliver', message, stream_id: entry.id, replay: true });
+          if (!(await conn.pushes.pushReplay(frame))) return; // cleared: the connection is gone
         }
-        const last = batch[batch.length - 1]!.id;
-        const how = await waitForAck(last);
-        if (how === 'closed') return;
-        if (how === 'timeout') {
-          ctx.trace.add('lost', `replay sq:${device} → ${conn.name}: no ack for the batch up to ${last} within ${seconds(opts.ackTimeoutMs)}, stopped; the device keeps its cursor`);
-          return;
-        }
-        after = acked.last ?? last;
+        total += batch.length;
+        after = batch[batch.length - 1]!.id;
       }
+      if (conn.closed) return;
+      // The single writer on the socket: replay_done is on the wire before live pushes resume.
+      ctx.send(conn, { t: 'replay_done' });
+      if (loop.alone) ctx.trace.add('queue', `sq:${device}: re-replay done → live pushes to ${conn.name} resumed`);
+      else if (total === 0) ctx.trace.add('queue', `sq:${device} nothing past cursor ${from} → replay_done to ${conn.name}`);
+      else ctx.trace.add('queue', `replay_done → ${conn.name} after ${total} entries; live frames may advance the cursor again`);
     } finally {
-      if (inFlight.get(conn.id)?.abort === abort) inFlight.delete(conn.id);
+      if (loops.get(conn.id) === loop) loops.delete(conn.id);
+      if (!conn.closed) conn.mode = 'live';
+      if (loop.alone) conn.pushes.resumeLive();
     }
   };
 
-  const offConnected = ctx.events.on('device_connected', async ({ conn }) => {
+  const offConnected = ctx.events.on('device_connected', ({ conn }) => {
     const cursor = replayFrom.get(conn.id);
     replayFrom.delete(conn.id);
-    if (cursor === undefined) return;
-    await replay(conn, cursor);
+    if (cursor === undefined) {
+      // Slow path: nothing to replay, but the client entered replay mode at hello and must leave it.
+      ctx.send(conn, { t: 'replay_done' });
+      ctx.trace.add('queue', `sq:${conn.device_id}: nothing to replay → replay_done to ${conn.name}`);
+      return;
+    }
+    // Detached: the loop runs beside the frame chain and beside the other listeners.
+    void replay(conn, cursor, false).catch((e) => {
+      ctx.trace.add('lost', `replay sq:${conn.device_id} → ${conn.name} failed: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  });
+
+  // ---- a dropped live push: re-replay alone from the dropped entry (replay-mode ADR) ----
+  const offDropped = ctx.events.on('push_dropped', ({ conn, stream_id }) => {
+    if (conn.closed) return;
+    const device = conn.device_id as DeviceId;
+    const floor = streamIdJustBelow(stream_id);
+    const running = loops.get(conn.id);
+    if (running) {
+      if (running.floor === null || compareStreamIds(floor, running.floor) < 0) running.floor = floor;
+      if (!running.alone) {
+        running.alone = true;
+        conn.pushes.suspendLive();
+        ctx.trace.add('queue', `sq:${device}: live push dropped at ${stream_id} during the replay → live frames to ${conn.name} suspended, loop extended`);
+      } else {
+        ctx.trace.add('queue', `sq:${device}: another live push dropped at ${stream_id} during the re-replay → loop extended`);
+      }
+      return;
+    }
+    conn.pushes.suspendLive();
+    ctx.trace.add('queue', `sq:${device}: live push dropped at ${stream_id} → live frames to ${conn.name} suspended, re-replay from ${stream_id} once the buffer drains`);
+    void replay(conn, floor, true).catch((e) => {
+      ctx.trace.add('lost', `re-replay sq:${device} → ${conn.name} failed: ${e instanceof Error ? e.message : String(e)}`);
+    });
   });
 
   const offDisconnected = ctx.events.on('device_disconnected', ({ conn }) => {
     replayFrom.delete(conn.id);
-    inFlight.get(conn.id)?.abort();
-    inFlight.delete(conn.id);
+    loops.delete(conn.id);
   });
 
   // ---- acks: the device advanced its cursor; the server keeps nothing (design §4.7) ----
   ctx.onFrame('ack', (conn, frame) => {
-    traceAck(conn, frame.up_to_stream_id);
-    inFlight.get(conn.id)?.onAck(frame.up_to_stream_id);
+    ctx.trace.add('queue', `${conn.name} ack sid=${frame.up_to_stream_id} (device-owned cursor; server stores nothing)`);
   });
 
   // ---- sweeper: XTRIM MINID <id windowMs ago> on every stream, every sweepMs (design §4.2, §4.5) ----
@@ -197,7 +233,7 @@ export function registerSync(ctx: ServerContext): () => void {
     sweeper = ctx.timers.setInterval(() => { void sweep(); }, opts.sweepMs);
   };
   const sweep = async (): Promise<void> => {
-    const minId = streamIdOf(idAt(ctx.clock.now() - opts.windowMs));
+    const minId = trimBoundaryAt(ctx.clock.now() - opts.windowMs);
     let dropped = 0;
     let streams = 0;
     for (const device of knownDevices) {
@@ -213,11 +249,11 @@ export function registerSync(ctx: ServerContext): () => void {
   return () => {
     if (sweeper !== null) ctx.timers.clearInterval(sweeper);
     sweeper = null;
-    for (const { abort } of [...inFlight.values()]) abort();
-    inFlight.clear();
+    loops.clear();
     offAcked();
     offHello();
     offConnected();
+    offDropped();
     offDisconnected();
   };
 }

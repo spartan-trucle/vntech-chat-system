@@ -15,7 +15,7 @@
  */
 
 import { isDeepStrictEqual } from 'node:util';
-import { createChatServer, type ChatServer, type ConnectionPhase } from '../../src/server.js';
+import { createChatServer, type ChatServer, type ChatServerOptions, type ConnectionMode, type ConnectionPhase } from '../../src/server.js';
 import type { FixtureDevice } from '../../src/fixtures.js';
 import type { DeviceId } from '../../src/protocol.js';
 import { formatTraceRow, type TraceRow, type TraceTag } from '../../src/trace.js';
@@ -71,7 +71,7 @@ export interface ScenarioEnv {
    * sockets stay healthy. Real: sleeps `ms`.
    */
   advance(ms: number): Promise<void>;
-  /** Lets a device's batched ack go out (its 20 ms gap runs on the shared timers): 50 ms. */
+  /** Lets frames in flight land on both sides: 50 ms of the active clock. */
   settle(): Promise<void>;
   /** Polls in real time; the budget is never below 2 s (load on the test machine). */
   until(cond: () => boolean, what: string, timeoutMs?: number): Promise<void>;
@@ -86,6 +86,8 @@ export interface ScenarioEnv {
   /** Full trace rows, for ordering assertions. */
   traceRows(): readonly TraceRow[];
   phase(device_id: DeviceId): ConnectionPhase | undefined;
+  /** The sync module's replay mode of a connection (replay-mode ADR), or undefined when there is none. */
+  mode(device_id: DeviceId): ConnectionMode | undefined;
   /** Marks the rows added by `fn` as bulk: printed folded, kept whole in the server trace. */
   fold<T>(label: string, fn: () => Promise<T>): Promise<T>;
 }
@@ -95,8 +97,10 @@ export interface ScenarioDefinition {
   title: string;
   /** Design sections the scenario proves, as printed in the table. */
   design: string;
-  /** True when the scenario can also run on real timers with the scaled numbers (S1, S5). */
+  /** True when the scenario can also run on real timers with the scaled numbers (S1, S5, S7). */
   realTimers?: boolean;
+  /** Server options the scenario needs on top of the runner's (S7 shrinks the push budget and quiets the heartbeat). */
+  server?: Partial<ChatServerOptions>;
   run(env: ScenarioEnv): Promise<void>;
 }
 
@@ -166,13 +170,19 @@ export function renderTrace(rows: readonly TraceRow[], folds: Fold[]): string[] 
   return out;
 }
 
-export async function runScenario(scenario: Scenario, opts: { realTime: boolean }): Promise<ScenarioResult> {
+export interface RunScenarioOptions {
+  realTime: boolean;
+  /** Overrides on top of the runner's and the scenario's server options (test/redis injects its ports here). */
+  server?: Partial<ChatServerOptions>;
+}
+
+export async function runScenario(scenario: Scenario, opts: RunScenarioOptions): Promise<ScenarioResult> {
   const realTime = opts.realTime && scenario.realTimers;
   const numbers = realTime ? SCALED_NUMBERS : DESIGN_NUMBERS;
   const time = realTime ? null : new FakeTime(T0);
   const started = Date.now();
 
-  const server = await createChatServer({
+  const base: ChatServerOptions = {
     port: 0,
     serverId: 'srv-1',
     seed: true,
@@ -182,6 +192,12 @@ export async function runScenario(scenario: Scenario, opts: { realTime: boolean 
       presence: { debounceMs: numbers.debounceMs },
       sync: { batchSize: numbers.batchSize },
     },
+  };
+  const layered = [scenario.server ?? {}, opts.server ?? {}];
+  const server = await createChatServer({
+    ...base,
+    ...Object.assign({}, ...layered),
+    moduleOptions: Object.assign({}, base.moduleOptions, ...layered.map((l) => l.moduleOptions ?? {})),
   });
   const trace = server.ctx.trace;
   const t0 = server.ctx.clock.now();
@@ -273,6 +289,7 @@ export async function runScenario(scenario: Scenario, opts: { realTime: boolean 
     rows: (tag) => trace.rows().filter((r) => tag === undefined || r.tag === tag).map((r) => r.text),
     traceRows: () => trace.rows(),
     phase: (device_id) => server.ctx.connections.byDevice(device_id)?.phase,
+    mode: (device_id) => server.ctx.connections.byDevice(device_id)?.mode,
     async fold(label, fn) {
       const from = trace.rows().length;
       try {

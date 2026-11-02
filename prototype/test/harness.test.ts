@@ -95,10 +95,12 @@ describe('ScriptedClient harness', () => {
       { wait: 10 },
     ]);
     expect(log).toEqual(['after presence']);
-    // B6 answers a watch with the current state before the stub above runs: hello_ack, then only presence frames.
+    // B6 answers a watch with the current state before the stub above runs: hello_ack, the sync
+    // module's replay_done (nothing to replay for a device without a cursor), then only presence frames.
     expect(c.received[0]?.t).toBe('hello_ack');
-    expect(c.received.length).toBeGreaterThanOrEqual(2);
-    expect(c.received.slice(1).every((f) => f.t === 'presence')).toBe(true);
+    expect(c.received[1]?.t).toBe('replay_done');
+    expect(c.received.length).toBeGreaterThanOrEqual(3);
+    expect(c.received.slice(2).every((f) => f.t === 'presence')).toBe(true);
     const tags = c.trace.rows().map((r) => r.tag);
     expect(tags).toContain('note');
     expect(tags).toContain('hello');
