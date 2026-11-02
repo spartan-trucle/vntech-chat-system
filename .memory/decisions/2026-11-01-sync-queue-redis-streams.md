@@ -1,7 +1,7 @@
 # ADR: Sync queue backing and cursor ownership
 
 Date: 2026-11-01
-Status: Accepted, amended 2026-11-01 after the prototype (B3, S2; design §7.3) and 2026-11-02 after real Redis (B9; design §7.9)
+Status: Accepted, amended 2026-11-01 after the prototype (B3, S2; design §7.3), 2026-11-02 after real Redis (B9; design §7.9), and 2026-11-02 again by the live-first ADR (`2026-11-02-live-first-replay-xadd-auto-id.md`; design §4.2, §4.4)
 Author: Truc Le
 
 ## Context
@@ -90,3 +90,18 @@ costs ~600 GB of memory per day before replication.
 - The three contracts ran unchanged against Redis apart from a settle point for
   asynchronous pub/sub and real sleeps for the TTL; 34 cases pass, 3 are kept as named
   expected failures.
+
+## Amendments (2026-11-02, from ADR `2026-11-02-live-first-replay-xadd-auto-id.md`)
+
+- **Both B9 items above are closed.** Stream ids are Redis-assigned (`XADD … *`) and
+  the `message_id` lives in the entry body; appends to one stream need no ordering, and
+  a late append is replayed, not refused. The idempotent retry survives on the retry
+  path only: a timed-out `XADD` is preceded by a tail read (`XREVRANGE sq:{device} + -
+  COUNT 100`) that skips a present `message_id`, best effort, with the client's dedup
+  by `message_id` as the guarantee.
+- **No extra `XRANGE`, no replay phase.** The "one more `XRANGE` after the switch to
+  live" of the first amendment is withdrawn: the connection is subscribed to live
+  pushes before the replay starts, the client dedups and sorts by `message_id`, and the
+  device cursor advances on replay acks only until the end-of-replay marker, which the
+  open item of the first amendment (batch end, design §7.3) must now provide.
+- The four operations, the slow-path rule and the `MAXLEN ~` floor are unchanged.

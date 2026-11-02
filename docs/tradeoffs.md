@@ -349,8 +349,9 @@ Not a §5 bullet but open on the board for the same reason: **production runtime
 
 - **Chosen:** one Redis Stream per device, entries carry `message_id` and
   `conversation_id` only (~50 B), 24-hour window trimmed hourly by `XTRIM MINID`,
-  `MAXLEN ~ 100000`. Three operations and nothing else: `XADD` on fan-out (idempotent
-  ID derived from the Snowflake), `XRANGE` from the device cursor in batches of 100
+  `MAXLEN ~ 100000`. Three operations and nothing else: `XADD … *` on fan-out
+  (Redis-assigned ids, `message_id` in the entry; 5.5.2b, decided 2026-11-02),
+  `XRANGE` from the device cursor in batches of 100
   on replay (bodies joined from the message store), `XTRIM` by time. Nothing is
   deleted on ack. When it fills (`MAXLEN` reached) or the cursor is older than the
   trim, the device takes the **slow path**: conversation summary over HTTPS, then
@@ -372,6 +373,63 @@ Not a §5 bullet but open on the board for the same reason: **production runtime
   expiring rows a day is the tombstone failure) against ~1.8 TB at 24 h (fits a
   ten-node Redis cluster). Each extra day of window costs ~600 GB before replication.
 
+### 5.5.2a Replay-to-live handoff
+
+Not a spec bullet: a B9 finding on 5.5.2 (design §7.9), decided 2026-11-02.
+
+- **Chosen:** live first, then replay. On `hello{cursor}` the chat server subscribes
+  the connection to live pushes before it starts the `XRANGE` loop; there is no replay
+  phase in the connection state machine and no flip. A message appended during the
+  replay reaches the device twice, and the client's store, keyed by `message_id`,
+  makes the second copy a no-op. Frames are not in `message_id` order on the socket
+  during the replay; the client renders from its store sorted by `message_id`, the
+  order the message store clusters by and the history page returns. Cursor rule: the
+  device cursor advances on replay batch acks only until the end-of-replay marker
+  (design §7.3, now required); a live frame before the marker is stored but its entry
+  id is not applied; after it, each live frame carries its entry id and advances the
+  cursor as before. Design §4.4; ADR `2026-11-02-live-first-replay-xadd-auto-id.md`.
+- **Rejected:** one more `XRANGE` after the flip, with the client deduping the overlap
+  (keeps the window structure and the replay phase, adds a read on every reconnect,
+  which is the reconnect-storm path, and still leaves a smaller window between that
+  read and the flip); a server-side buffer of live pushes during the replay, released
+  deduplicated at the flip (a per-connection buffer unbounded under a slow replay,
+  memory on the chat server exactly during a reconnect storm, and it keeps the replay
+  phase in which B3 found the ack deadlock).
+- **Why:** both patches assume replay first, then live. The author's answer removed
+  that assumption: ids are Snowflakes and the client re-sorts by `message_id` in its
+  local store anyway, because send order is not reliable, so monotonic frame order on
+  the socket during the replay was never a requirement. Without it the window is gone
+  with no extra read and no server buffer, and the state machine loses a phase.
+- **Number:** 15 M sockets (estimation §2) is the reconnect-storm path the extra read
+  would land on. The overlap is bounded by the replay's duration, at ~50 B per entry
+  and one body join per copy.
+
+### 5.5.2b Per-stream append order
+
+Not a spec bullet: a B9 finding on 5.5.2 (design §7.9), decided 2026-11-02.
+
+- **Chosen:** `XADD … *`, Redis-assigned stream ids, `message_id` in the entry body,
+  no serialisation per device stream. A late append lands behind the top entry and is
+  replayed instead of refused. Idempotent retry on the retry path only: when an `XADD`
+  times out, the appender reads the tail (`XREVRANGE sq:{device} + - COUNT 100`) and
+  skips the append if that `message_id` is present. Best effort, so the client dedup
+  by `message_id` is the guarantee and a duplicate costs one `MAXLEN` slot and one
+  body join. The two-layer dedup of 5.8.2 is unchanged. Design §4.2; ADR
+  `2026-11-02-live-first-replay-xadd-auto-id.md`.
+- **Rejected:** explicit Snowflake-derived stream ids with appends serialised per
+  device stream (a lock or single writer per device on the fan-out path, and a late
+  append is still refused rather than queued); a `SET NX` dedup key per entry before
+  `XADD *` (exact idempotency, but it doubles Redis writes on the normal path and adds
+  a key per entry, where the retry-path tail read gives the same property where it
+  matters at no normal-path cost).
+- **Why:** Redis refuses an `XADD` whose id is at or below the top entry, so explicit
+  ids turn an out-of-order fan-out into a lost entry unless something serialises the
+  appends. The §4.2 code block already showed `*`; the prose that contradicted it is
+  withdrawn. The author's requirement that a retried append stay idempotent is met
+  where retries happen, not on every append.
+- **Number:** estimation §3.3: 700 k appends/s at peak is what a per-stream lock would
+  sit on; a `SET NX` per entry would double Redis writes to ~1.4 M/s at peak.
+
 ### 5.5.3 Exactly-once vs at-least-once, and client-side dedup
 
 - **Chosen:** at-least-once everywhere, with dedup at two points. On send, the server
@@ -385,8 +443,9 @@ Not a §5 bullet but open on the board for the same reason: **production runtime
   and an atomic fan-out; the board's CAP answer gives that up so a partition
   "degrades to delayed, never cannot send".
 - **Why:** every retry loop in the system (outbox flush, fan-out, queue append,
-  replay) is idempotent on a fixed ID, so duplicates are cheap to absorb and
-  impossible to prevent without coordination on the hot path.
+  replay) is idempotent on a fixed ID, the queue append by a best-effort tail read on
+  its retry path only (5.5.2b), so duplicates are cheap to absorb and impossible to
+  prevent without coordination on the hot path.
 - **Number:** none; decided on the idempotency argument.
 
 ### 5.5.4 Ordering across devices and group members
