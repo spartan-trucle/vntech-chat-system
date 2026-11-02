@@ -26,7 +26,7 @@ at Messenger / WhatsApp scale.
   list (A3) that closes the fails.
 - [`prototype/`](prototype/) — **the protocol prototype**: a Node.js + TypeScript chat server with in-memory ports,
   a scripted multi-device client, and the six scenarios the runtime ADR defines as done (S1 unclean drop, S2 replay
-  from the cursor, S3 dedup, S4 list before replay, S5 presence debounce, S6 media metadata only), all passing. One
+  from the cursor, S3 dedup, S4 list before replay, S5 presence debounce, S6 media metadata only) plus S7, the replay-mode boundary (B10), all passing. One
   process, no auth, no persistence, no multi-server. Run `npm test` and `npm run scenarios` in `prototype/`; the
   scenario table is in [`prototype/README.md`](prototype/README.md). Optional: `npm run redis:up` and
   `npm run test:redis` run the sync queue, route table, presence lease and presence bus against a real Redis 7
