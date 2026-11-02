@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-02, report round 29 (A3.5 done on A 1d6443a, handed to C; B10 running on B; item 8 in debate; 5 A3 decisions open: 4, 5, 6b, 8, 9, plus text item 12; 300 ms budgets await the author's confirmation)
+Last updated: 2026-11-02, report round 30 (A3.5 merged 955decf, board 72f905e; B10 running on B; item 8 in debate; ack cadence 100 frames / 500 ms to confirm; 5 A3 decisions open: 4, 5, 6b, 8, 9, plus text item 12; 300 ms budgets await the author's confirmation)
 
 ## Epics
 
@@ -12,7 +12,7 @@ Last updated: 2026-11-02, report round 29 (A3.5 done on A 1d6443a, handed to C; 
 | A1 tradeoffs.md | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
 | A2 sequence diagrams | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
 | A4 rubric run | A | 1 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
-| A3 open decisions | hub + author | 2 | decisions 1, 2, 3, 6a, 7, 10 and 11 decided (ADRs 6858647, b5f102d, 74ae209, this round); A3.3 text merged (8273ae9), A3.4 merged (3dea2d4), board updated (8d8324c); A3.5 done on A (1d6443a), handed to C; B10 scenario running on B; open: 4, 5, 6b, 8, 9, text item 12; 300 ms budgets in §2.7 still marked to confirm | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
+| A3 open decisions | hub + author | 2 | decisions 1, 2, 3, 6a, 7, 10 and 11 decided (ADRs 6858647, b5f102d, 74ae209, this round); A3.3 text merged (8273ae9), A3.4 merged (3dea2d4), board updated (8d8324c); A3.5 merged (955decf), board updated (72f905e); B10 scenario running on B; open: 4, 5, 6b, 8, 9, text item 12; 300 ms budgets in §2.7 still marked to confirm | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
 | B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
 | B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
@@ -43,7 +43,7 @@ Last updated: 2026-11-02, report round 29 (A3.5 done on A 1d6443a, handed to C; 
 | A3.2 reply quoting text | fb242cd (board b0088d2) | 2026-11-02 |
 | A3.3 store replica loss text | 8273ae9 (board a76e0f5) | 2026-11-02 |
 | A3.4 replay-to-live handoff and append order text | 3dea2d4 (board 8d8324c) | 2026-11-02 |
-| A3.5 end of replay as a mode boundary text | pending (A head 1d6443a, handed to C) | 2026-11-02 |
+| A3.5 end of replay as a mode boundary text | 955decf (board 72f905e) | 2026-11-02 |
 
 ## Surprises collected for C2
 
