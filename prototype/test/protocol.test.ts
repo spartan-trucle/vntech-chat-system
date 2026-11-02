@@ -9,6 +9,7 @@ const clientFrames: ClientFrame[] = [
   { t: 'msg', client_msg_id: 'c-3', conversation_id: 'c1', body: 'pic', media_key: 'ap-southeast-1/2026/11/u1', media_size: 4404019, media_mime: 'image/jpeg', sha256: 'ab'.repeat(32) },
   { t: 'ack', up_to_stream_id: '55-0' },
   { t: 'receipt', conversation_id: 'c1', last_read_id: '41' },
+  { t: 'delivered', conversation_id: 'c1', up_to_message_id: '41' },
   { t: 'watch', user_ids: ['khanh', 'linh'] },
   { t: 'unwatch', user_ids: ['khanh'] },
 ];
@@ -79,6 +80,14 @@ describe('protocol frames', () => {
   test('replay_done carries nothing but its type and is a server frame only', () => {
     expect(decodeFrame('{"t":"replay_done"}', 'server')).toEqual({ t: 'replay_done' });
     expect(() => decodeFrame('{"t":"replay_done"}', 'client')).toThrow(FrameError);
+  });
+
+  test('delivered{conversation_id, up_to_message_id} is a client frame with both fields required (delivered-receipt ADR); never a server frame', () => {
+    expect(decodeFrame('{"t":"delivered","conversation_id":"c1","up_to_message_id":"41"}', 'client')).toEqual({ t: 'delivered', conversation_id: 'c1', up_to_message_id: '41' });
+    expect(() => decodeFrame('{"t":"delivered","conversation_id":"c1"}', 'client')).toThrow(/delivered: missing field up_to_message_id/);
+    expect(() => decodeFrame('{"t":"delivered","up_to_message_id":"41"}', 'client')).toThrow(/delivered: missing field conversation_id/);
+    expect(() => decodeFrame('{"t":"delivered","conversation_id":"c1","up_to_message_id":41}', 'client')).toThrow(/delivered: field up_to_message_id has the wrong type/);
+    expect(() => decodeFrame('{"t":"delivered","conversation_id":"c1","up_to_message_id":"41"}', 'server')).toThrow(FrameError);
   });
 
   test('rejects non-JSON', () => {

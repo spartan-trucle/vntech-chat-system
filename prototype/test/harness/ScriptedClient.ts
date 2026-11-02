@@ -108,6 +108,7 @@ function describeFrame(frame: ClientFrame | ServerFrame): string {
     case 'msg': return `${frame.conversation_id} {cid:${frame.client_msg_id.slice(0, 8)}${frame.media_key ? `, media_key=${frame.media_key}` : ''}${frame.reply_to ? `, reply_to=#${frame.reply_to}` : ''}}`;
     case 'ack': return `up_to=${frame.up_to_stream_id}`;
     case 'receipt': return 'user_id' in frame ? `${frame.conversation_id} ${frame.user_id} read ≤ #${frame.last_read_id}` : `${frame.conversation_id} read ≤ #${frame.last_read_id}`;
+    case 'delivered': return `${frame.conversation_id} delivered ≤ #${frame.up_to_message_id}`;
     case 'watch': case 'unwatch': return frame.user_ids.join(', ');
     case 'hello_ack': return frame.slow_path ? 'slow_path' : 'ok';
     case 'msg_ack': return `{cid:${frame.client_msg_id.slice(0, 8)}, id:#${frame.message_id}}`;

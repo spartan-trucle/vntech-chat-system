@@ -10,6 +10,12 @@
  * the server's replay loop (`true`) or is a live push (`false`); `replay_done` closes a
  * replay. The client applies a live frame's `stream_id` to its cursor only outside replay
  * mode; inside it the cursor moves by `ack{up_to_stream_id}` alone.
+ *
+ * Delivered receipt (ADR 2026-11-02, design §3.4): `delivered{conversation_id,
+ * up_to_message_id}` says the device stored every message of the conversation up to that
+ * id, in replay mode and live mode alike. A different key and owner from the ack: the ack
+ * is one stream id per device (the device's sync cursor), this is one message id per
+ * conversation per device (the server's delivery cursor for F8).
  */
 
 import type { MessageId } from './ids.js';
@@ -76,6 +82,13 @@ export interface ClientReceiptFrame {
   last_read_id: MessageId;
 }
 
+/** The device stored every message of the conversation up to this id (delivered-receipt ADR). */
+export interface DeliveredFrame {
+  t: 'delivered';
+  conversation_id: ConversationId;
+  up_to_message_id: MessageId;
+}
+
 export interface WatchFrame {
   t: 'watch';
   user_ids: UserId[];
@@ -86,7 +99,7 @@ export interface UnwatchFrame {
   user_ids: UserId[];
 }
 
-export type ClientFrame = HelloFrame | MsgFrame | AckFrame | ClientReceiptFrame | WatchFrame | UnwatchFrame;
+export type ClientFrame = HelloFrame | MsgFrame | AckFrame | ClientReceiptFrame | DeliveredFrame | WatchFrame | UnwatchFrame;
 
 // ---- server → client ------------------------------------------------------------
 
@@ -194,6 +207,7 @@ const clientShapes: Record<ClientFrameType, Shape> = {
   },
   ack: { up_to_stream_id: { type: 'string' } },
   receipt: { conversation_id: { type: 'string' }, last_read_id: { type: 'string' } },
+  delivered: { conversation_id: { type: 'string' }, up_to_message_id: { type: 'string' } },
   watch: { user_ids: { type: 'string[]' } },
   unwatch: { user_ids: { type: 'string[]' } },
 };
