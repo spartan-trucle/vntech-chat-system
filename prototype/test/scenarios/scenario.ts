@@ -34,12 +34,14 @@ export interface ScenarioNumbers {
   batchSize: number;
   /** Client-side `watch`/`unwatch` batching window (presence ADR: 500 ms). */
   watchBatchMs: number;
+  /** Client-side `delivered` coalescing window (design §3.4, delivered-receipt ADR: 2 s). */
+  deliveredWindowMs: number;
 }
 
 /** The design's numbers, printed in the trace as-is. */
-export const DESIGN_NUMBERS: ScenarioNumbers = { pingMs: 5000, deadAfterMs: 10_000, sweepMs: 1000, debounceMs: 5000, mirrorMs: 15_000, backoffBaseMs: 1000, batchSize: 100, watchBatchMs: 500 };
+export const DESIGN_NUMBERS: ScenarioNumbers = { pingMs: 5000, deadAfterMs: 10_000, sweepMs: 1000, debounceMs: 5000, mirrorMs: 15_000, backoffBaseMs: 1000, batchSize: 100, watchBatchMs: 500, deliveredWindowMs: 2000 };
 /** The same proportions a hundred times faster, for a real-timer run that still ends in seconds. */
-export const SCALED_NUMBERS: ScenarioNumbers = { pingMs: 50, deadAfterMs: 100, sweepMs: 10, debounceMs: 100, mirrorMs: 150, backoffBaseMs: 100, batchSize: 100, watchBatchMs: 5 };
+export const SCALED_NUMBERS: ScenarioNumbers = { pingMs: 50, deadAfterMs: 100, sweepMs: 10, debounceMs: 100, mirrorMs: 150, backoffBaseMs: 100, batchSize: 100, watchBatchMs: 5, deliveredWindowMs: 20 };
 
 /** Fake runs start at local midnight so the trace reads `00:00:00`, `00:00:10`, `00:00:15` like the page's clock. */
 export const T0 = new Date(2026, 10, 1, 0, 0, 0).getTime();
@@ -214,6 +216,7 @@ export async function runScenario(scenario: Scenario, opts: RunScenarioOptions):
       mirrorRule: { noPingAfterMs: numbers.mirrorMs },
       reconnect: { baseMs: numbers.backoffBaseMs, capMs: numbers.backoffBaseMs * 30, random: () => 0.5 },
       watchBatchMs: numbers.watchBatchMs,
+      deliveredWindowMs: numbers.deliveredWindowMs,
       ...(time ? { timers: time } : {}),
     };
     const c = new ScriptedClient(device, { ...base, ...over });

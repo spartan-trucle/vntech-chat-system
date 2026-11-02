@@ -34,6 +34,7 @@ src/sync/              B3  queue append after ack, replay       (design §4.2, �
                        B10 live-first replay, replay_done, re-replay after a dropped push
 src/history/           B4  page API, summaries, slow path       (design §2.3, §4.3)
 src/receipts/          B5  read/delivery cursors, push hints    (design §3)
+                       B11 the delivered receipt: `delivered{conversation_id, up_to_message_id}`
 src/presence/          B6  state machine, watch/unwatch, lease  (design §5)
 src/media/             B7  media intent and signed-URL stub     (design §6.2)
 src/redis/             B9  Redis adapters for SyncQueue, RouteTable, PresenceStore and
@@ -79,6 +80,26 @@ stream id every 100 replay frames or 500 ms and at `replay_done`, and applies a 
 frame's `stream_id` to its cursor only outside replay mode. Scenario S7 checks, after
 every frame, that the cursor never passes an entry the device does not hold.
 
+## The delivered receipt (B11)
+
+The delivered-receipt ADR of 2026-11-02 (`delivered-receipt-device-stored`) is in the
+code: *delivered* means the device stored the message, so the device says so. The client
+sends `delivered{conversation_id, up_to_message_id}` after a `deliver` is in its store, in
+replay mode and live mode alike, coalesced to at most one per conversation per 2 s with the
+highest `message_id` stored (the read receipt's rule and number, design §3.4). The server
+runs `max()` on `delivery_cursors` (one partition read, one write; a late or duplicate frame
+is a traced no-op) and keeps no per-connection state and no stream-id mapping; the replay
+`ack{up_to_stream_id}` is a different frame with a different key and owner and still
+persists nothing. B5's rule that advanced the delivery cursor when a push was handed to the
+socket (finding 10: a dropped push counted as delivered) is removed, not patched; only the
+sender's own cursors still move on store, as on the page. The scripted client keeps
+`storedUpTo` and `deliveredUpTo` per conversation (`deliveredWindowMs` sets the window,
+`autoDelivered: false` turns the frame off for a test that drives the cursor by hand); at
+the first `replay_done` after a `hello` it sends one `delivered` for every conversation
+where the two differ, which covers a receipt lost inside the window when the previous
+connection dropped. Status (`GET …/status`) is derived from the cursors as before: a pushed
+but not yet stored message reads *sent*; the device's frame makes it *delivered*.
+
 ## Scenarios
 
 The runtime ADR's definition of done: scripted runs over the real server with the fixture
@@ -94,7 +115,7 @@ devices interleaved) so the two can be compared by eye.
 | S4 | The chat list renders from the summary rows before the replay finishes; a cold open during the replay reads the store, not the queue | §4.3, §4.4 | Truc·laptop 250 messages behind: `GET /conversations?since=` first, then `hello`; three reads of 100 that wait for no ack (the second held), the laptop acks every 100 frames and at `replay_done`; `GET /conversations/c1/messages` between reads |
 | S5 | `watch` is batched on the device and answered with the current state; a drop at t is seen by the watcher as `offline, last_seen=t` at ≈ t+15–16 s; a reconnect inside the 5 s debounce publishes nothing; `unwatch` stops events; 60 s of pongs never write the presence lease | §5.2–§5.4 | Khanh watches Truc; Truc·phone drops; Truc·laptop drops and the phone is back 12 s later; `unwatch`, then a clean close |
 | S6 | A media message carries `media_key` and the §6.2 metadata only: no URL and no byte on either socket; the download URL is HTTP; an intent over 10 MB is refused before any byte moves | §6.2 | `POST /media/intent` (4.2 MB), `msg{media_key, size, mime, sha256}`, `GET /media/<key>/url`, every frame tapped on both sockets; a 12.4 MB intent |
-| S7 | Replay is a mode boundary: the initial replay runs beside live pushes (frames out of message order on the socket, the store in message order, each message once); a live push the budget drops is re-replayed alone from the dropped entry and ends with `replay_done`, no reconnect; an ack during the re-replay is handled with no waiter; after every frame the cursor has never passed an entry the device does not hold | §4.4, §4.7, §5.8.3 | Khanh·phone 150 behind, the second read held while Truc sends 3; then the phone's server-side socket corked, 9 pushes under `maxPending` 8 (one dropped), one more while suspended, uncork, the re-replay's first read held while the 500 ms ack lands |
+| S7 | Replay is a mode boundary: the initial replay runs beside live pushes (frames out of message order on the socket, the store in message order, each message once); a live push the budget drops is re-replayed alone from the dropped entry and ends with `replay_done`, no reconnect; an ack during the re-replay is handled with no waiter; after every frame the cursor has never passed an entry the device does not hold. Delivered is the device's word (B11): after every frame the server's delivery cursor for the phone is never above what its `delivered` frames said, stays below the dropped message until the re-replay stored it and the coalesced frame arrived, then passes it | §3.4, §4.4, §4.7, §5.8.3 | Khanh·phone 150 behind, the second read held while Truc sends 3; then the phone's server-side socket corked, 9 pushes under `maxPending` 8 (one dropped), one more while suspended, uncork, the re-replay's first read held while the 500 ms ack lands; the clock advanced by the 2 s window so the `delivered` leaves |
 
 ```bash
 npm run scenarios                  # fake time with the design's numbers: traces read t, t+10 s, t+15 s

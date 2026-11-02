@@ -22,15 +22,24 @@
  * moves only by the client's own `ack{up_to_stream_id}` (every `ackEvery` replay frames or
  * `ackAfterMs`, and at `replay_done`); outside it each live frame's `stream_id` is applied
  * at once and acked on the same cadence.
+ *
+ * B11 (delivered-receipt ADR, design §3.4): after a `deliver` is stored (not a duplicate),
+ * in replay mode and live mode alike, a `delivered{conversation_id, up_to_message_id}` is
+ * offered to a coalescer: at most one per conversation per `deliveredWindowMs` (2 s),
+ * carrying the highest `message_id` stored for that conversation. The client keeps
+ * `storedUpTo` and `deliveredUpTo` per conversation; at the first `replay_done` after a
+ * `hello` it sends one `delivered` for every conversation where the two differ (the
+ * receipts lost when the previous connection dropped inside the window).
  */
 
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { FixtureDevice } from '../../src/fixtures.js';
-import { decodeFrame, encodeFrame, type AppState, type ClientFrame, type DeliverFrame, type HelloAckFrame, type Message, type MsgFrame, type ServerFrame, type StreamId, type UserId } from '../../src/protocol.js';
+import { decodeFrame, encodeFrame, type AppState, type ClientFrame, type ConversationId, type DeliverFrame, type HelloAckFrame, type Message, type MsgFrame, type ServerFrame, type StreamId, type UserId } from '../../src/protocol.js';
 import { compareIds, type MessageId } from '../../src/ids.js';
 import { compareStreamIds } from '../../src/ports/index.js';
+import { ReceiptCoalescer } from '../../src/receipts/coalesce.js';
 import type { TimerHandle, Timers } from '../../src/server.js';
 import { Trace } from '../../src/trace.js';
 
@@ -85,7 +94,14 @@ export interface ScriptedClientOptions {
   ackAfterMs?: number;
   /** Runs after the client's own bookkeeping for every frame received; a test checks invariants here. */
   onFrame?: (frame: ServerFrame, client: ScriptedClient) => void;
+  /** B11: send `delivered` after every stored `deliver` (default on); `false` lets a test drive the cursor by hand. */
+  autoDelivered?: boolean;
+  /** B11: the coalescing window of design §3.4 (2000 ms). */
+  deliveredWindowMs?: number;
 }
+
+/** The delivered receipt's coalescing window (design §3.4: the read receipt's number). */
+export const DEFAULT_DELIVERED_WINDOW_MS = 2000;
 
 /** The replay-mode ADR's cadence numbers (the author's, to confirm). */
 export const DEFAULT_ACK_EVERY = 100;
@@ -108,6 +124,7 @@ function describeFrame(frame: ClientFrame | ServerFrame): string {
     case 'msg': return `${frame.conversation_id} {cid:${frame.client_msg_id.slice(0, 8)}${frame.media_key ? `, media_key=${frame.media_key}` : ''}${frame.reply_to ? `, reply_to=#${frame.reply_to}` : ''}}`;
     case 'ack': return `up_to=${frame.up_to_stream_id}`;
     case 'receipt': return 'user_id' in frame ? `${frame.conversation_id} ${frame.user_id} read ≤ #${frame.last_read_id}` : `${frame.conversation_id} read ≤ #${frame.last_read_id}`;
+    case 'delivered': return `${frame.conversation_id} delivered ≤ #${frame.up_to_message_id}`;
     case 'watch': case 'unwatch': return frame.user_ids.join(', ');
     case 'hello_ack': return frame.slow_path ? 'slow_path' : 'ok';
     case 'msg_ack': return `{cid:${frame.client_msg_id.slice(0, 8)}, id:#${frame.message_id}}`;
@@ -172,6 +189,7 @@ export class ScriptedClient {
       ? null
       : { ...DEFAULT_BACKOFF, random: Math.random, ...(reconnect === true ? {} : reconnect) };
     this.initReplayBookkeeping(opts);
+    this.initDeliveredBookkeeping(opts);
   }
 
   get socket(): WebSocket | null {
@@ -252,6 +270,7 @@ export class ScriptedClient {
   /** Sends hello with the device's cursors (replay mode begins here), waits for hello_ack, then flushes the outbox. */
   async hello(over: Partial<Pick<ClientFrame & { t: 'hello' }, 'app_state'>> = {}): Promise<HelloAckFrame> {
     this.enterReplay('hello');
+    this.resyncDeliveredAtReplayDone = true;
     this.send({
       t: 'hello',
       device_id: this.device.device_id,
@@ -412,6 +431,7 @@ export class ScriptedClient {
       this.store.set(message.message_id, message);
       this.seen.add(message.message_id);
       this.delivered.push(message);
+      this.noteStored(message.conversation_id, message.message_id);
     }
     if (replay) {
       if (!this.inReplay) this.enterReplay('frame');
@@ -430,6 +450,10 @@ export class ScriptedClient {
   private onReplayDone(): void {
     this.inReplay = false;
     if (this.autoAck) this.flushAck();
+    if (this.resyncDeliveredAtReplayDone) {
+      this.resyncDeliveredAtReplayDone = false;
+      this.resendDelivered();
+    }
   }
 
   private countForAck(): void {
@@ -460,6 +484,61 @@ export class ScriptedClient {
     this.ackTimer = null;
   }
   // ---- end of the B10 block ----
+
+  // ---- B11 delivered receipt (design §3.4; delivered-receipt ADR) ---------------------
+
+  /** Highest `message_id` stored per conversation. */
+  readonly storedUpTo = new Map<ConversationId, MessageId>();
+  /** Highest `message_id` a `delivered` frame left the device for, per conversation. */
+  readonly deliveredUpTo = new Map<ConversationId, MessageId>();
+  private autoDelivered = true;
+  private deliveredWindowMs = DEFAULT_DELIVERED_WINDOW_MS;
+  /** At most one `delivered` per conversation per window, carrying the highest id offered (the read receipt's rule). */
+  private deliveredCoalescer!: ReceiptCoalescer;
+  /** Armed by `hello`, consumed by the first `replay_done` after it: the ADR's resend on a new connection. */
+  private resyncDeliveredAtReplayDone = false;
+
+  private initDeliveredBookkeeping(opts: ScriptedClientOptions): void {
+    this.autoDelivered = opts.autoDelivered ?? true;
+    this.deliveredWindowMs = opts.deliveredWindowMs ?? DEFAULT_DELIVERED_WINDOW_MS;
+    this.deliveredCoalescer = new ReceiptCoalescer(this.timers, this.deliveredWindowMs);
+  }
+
+  /** A new message is in the store: the highest stored id moves, and (both modes) a `delivered` is offered to the window. */
+  private noteStored(conversation_id: ConversationId, message_id: MessageId): void {
+    const top = this.storedUpTo.get(conversation_id);
+    if (top === undefined || compareIds(message_id, top) > 0) this.storedUpTo.set(conversation_id, message_id);
+    if (!this.autoDelivered) return;
+    this.deliveredCoalescer.offer(conversation_id, this.storedUpTo.get(conversation_id)!, (c, id) => { this.sendDelivered(c, id); });
+  }
+
+  /**
+   * Sends `delivered{conversation_id, up_to_message_id}` if it can leave the device now and is
+   * above what was already sent; `deliveredUpTo` moves only when the frame left. A frame that
+   * cannot leave (no socket, radio off) is not retried here: the resend at the next
+   * `replay_done` covers it.
+   */
+  sendDelivered(conversation_id: ConversationId, up_to_message_id: MessageId): boolean {
+    const sent = this.deliveredUpTo.get(conversation_id);
+    if (sent !== undefined && compareIds(up_to_message_id, sent) <= 0) return false;
+    if (this.radioOff || !this.connected) {
+      this.trace.add('lost', `delivered from ${this.name}: ${conversation_id} ≤ #${up_to_message_id} cannot leave the device (no socket); resent after the next replay_done`);
+      return false;
+    }
+    this.send({ t: 'delivered', conversation_id, up_to_message_id });
+    this.deliveredUpTo.set(conversation_id, up_to_message_id);
+    return true;
+  }
+
+  /** The first `replay_done` after a `hello`: one `delivered` per conversation where stored ≠ sent, past the window. */
+  private resendDelivered(): void {
+    if (!this.autoDelivered) return;
+    const gaps = [...this.storedUpTo].filter(([c, top]) => this.deliveredUpTo.get(c) !== top);
+    if (gaps.length === 0) return;
+    this.trace.add('note', `${this.name}: replay_done on a new connection → delivered resent for ${gaps.length} conversation(s) where stored ≠ sent (${gaps.map(([c, top]) => `${c} ≤ #${top}`).join(', ')})`);
+    for (const [c, top] of gaps) this.sendDelivered(c, top);
+  }
+  // ---- end of the B11 block ----
 
   /** Resolves with the first frame that matches (already received frames count), or rejects after `timeoutMs`. */
   expect(what: ServerFrame['t'] | FramePredicate, timeoutMs = 2000): Promise<ServerFrame> {
@@ -544,6 +623,9 @@ export class ScriptedClient {
     this.wanted = false;
     this.disarmMirror();
     this.disarmWatchBatch();
+    // The app is going away: a `delivered` still inside its window is lost with the connection
+    // (the ADR's case); the resend at the next replay_done covers it.
+    this.deliveredCoalescer.dispose();
     if (this.retry !== null) {
       this.timers.clearTimeout(this.retry);
       this.retry = null;
