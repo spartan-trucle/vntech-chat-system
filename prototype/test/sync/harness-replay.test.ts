@@ -21,9 +21,13 @@ describe('ScriptedClient replay bookkeeping (B10): store by message id, replay m
     server = await createChatServer({ port: 0, seed: true });
     return server;
   };
-  /** Connects and says hello with a cursor, so the server replays (an empty stream: replay_done at once). */
+  /**
+   * Connects and says hello with a cursor, so the server replays (an empty stream: replay_done at once).
+   * B11's `delivered` frame is off: its coalescing window is a timer too, and the `time.pending()`
+   * assertions below count the ack timer alone (the frame has its own tests in test/receipts/delivered.test.ts).
+   */
   const connect = async (opts: Partial<ScriptedClientOptions> = {}): Promise<ScriptedClient> => {
-    const c = new ScriptedClient(DEVICES.trucPhone, { url: server!.url, trace: server!.ctx.trace, mirrorRule: false, reconnect: false, ...opts });
+    const c = new ScriptedClient(DEVICES.trucPhone, { url: server!.url, trace: server!.ctx.trace, mirrorRule: false, reconnect: false, autoDelivered: false, ...opts });
     clients.push(c);
     c.cursor = '0-0';
     await c.connect();

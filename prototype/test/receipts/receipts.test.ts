@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'vitest';
 import { createChatServer, type ChatServer } from '../../src/server.js';
-import { ScriptedClient } from '../harness/ScriptedClient.js';
+import { ScriptedClient, type ScriptedClientOptions } from '../harness/ScriptedClient.js';
 import { DEVICES, type FixtureDevice } from '../../src/fixtures.js';
 import type { ErrorFrame, MsgAckFrame, MsgFrame, ServerReceiptFrame } from '../../src/protocol.js';
 import { InMemoryPushGateway } from '../../src/receipts/PushGateway.js';
@@ -20,8 +20,8 @@ describe('B5 receipts: read cursors, multi-device read state, open set (design �
     server = await createChatServer({ port: 0, seed: true, moduleOptions: { receipts: { pushGateway: gateway, ...receipts } } });
     return server;
   };
-  const connect = async (device: FixtureDevice): Promise<ScriptedClient> => {
-    const c = new ScriptedClient(device, { url: server!.url, trace: server!.ctx.trace });
+  const connect = async (device: FixtureDevice, opts: Partial<ScriptedClientOptions> = {}): Promise<ScriptedClient> => {
+    const c = new ScriptedClient(device, { url: server!.url, trace: server!.ctx.trace, ...opts });
     clients.push(c);
     await c.connect();
     await c.hello();
@@ -168,10 +168,11 @@ describe('B5 receipts: read cursors, multi-device read state, open set (design �
     void srv;
   });
 
-  test('the trace reads like docs/prototype/index.html: cursor write, badge clear, cursors to the open chat', async () => {
+  test('the trace reads like docs/prototype/index.html: the sender\'s cursors on store, delivered by each device, cursor write, badge clear, cursors to the open chat', async () => {
     const srv = await start();
-    const phone = await connect(DEVICES.trucPhone);
-    const laptop = await connect(DEVICES.trucLaptop);
+    // Truc's devices send `delivered` by hand here so the two rows come in a fixed order (two sockets race otherwise).
+    const phone = await connect(DEVICES.trucPhone, { autoDelivered: false });
+    const laptop = await connect(DEVICES.trucLaptop, { autoDelivered: false });
     const khanh = await connect(DEVICES.khanhPhone);
     const t0 = await post(phone, 'c1', 't0', [khanh, laptop]);
     khanh.send({ t: 'receipt', conversation_id: 'c1', last_read_id: t0 }); // Khanh has c1 open
@@ -179,6 +180,10 @@ describe('B5 receipts: read cursors, multi-device read state, open set (design �
     srv.ctx.trace.clear();
 
     const id = await post(khanh, 'c1', 'k1', [phone, laptop]);
+    await settle();
+    phone.send({ t: 'delivered', conversation_id: 'c1', up_to_message_id: id });
+    await settle();
+    laptop.send({ t: 'delivered', conversation_id: 'c1', up_to_message_id: id });
     await settle();
     phone.send({ t: 'receipt', conversation_id: 'c1', last_read_id: id });
     await laptop.expect('receipt');
@@ -188,7 +193,9 @@ describe('B5 receipts: read cursors, multi-device read state, open set (design �
     const serverRows = traceRows(['receipt', 'push', 'apns']).filter((r) => !/^\w+ (←|\S+·\S+ →)/.test(r));
     expect(serverRows).toEqual([
       `push #${id} → Truc·phone, Truc·laptop over the socket`,
-      `receipt delivery_cursors[c1] ← #${id} for Khanh·phone (sender), Truc·phone (over the socket), Truc·laptop (over the socket)`,
+      `receipt delivery_cursors[c1] ← #${id} for Khanh·phone (sender)`,
+      `receipt delivered c1 ≤ #${id} by Truc·phone`,
+      `receipt delivered c1 ≤ #${id} by Truc·laptop`,
       `receipt read_cursors[c1][truc] = max(prev,#${id})`,
       'push read_cursor → Truc·laptop (clears their badge)',
       'receipt cursors c1 → Khanh·phone (devices with the chat open)',
@@ -206,8 +213,8 @@ describe('B5 fan-out hooks: delivery cursors and push hints without the body (de
     server = await createChatServer({ port: 0, seed: true, moduleOptions: { receipts: { pushGateway: gateway, ...receipts } } });
     return server;
   };
-  const connect = async (device: FixtureDevice): Promise<ScriptedClient> => {
-    const c = new ScriptedClient(device, { url: server!.url, trace: server!.ctx.trace });
+  const connect = async (device: FixtureDevice, opts: Partial<ScriptedClientOptions> = {}): Promise<ScriptedClient> => {
+    const c = new ScriptedClient(device, { url: server!.url, trace: server!.ctx.trace, ...opts });
     clients.push(c);
     await c.connect();
     await c.hello();
@@ -222,18 +229,23 @@ describe('B5 fan-out hooks: delivery cursors and push hints without the body (de
     server = undefined;
   });
 
-  test('a deliver over a live socket advances that device\'s delivery cursor; the sender\'s own cursors advance too; an offline device\'s does not', async () => {
+  test('a deliver handed to a live socket does not advance that device\'s delivery cursor (B11: the push-to-socket rule is withdrawn); the sender\'s own cursors advance on store; the device\'s cursor moves when it says delivered; an offline device\'s does not', async () => {
     const srv = await start();
     const phone = await connect(DEVICES.trucPhone);
-    const khanh = await connect(DEVICES.khanhPhone);
+    const khanh = await connect(DEVICES.khanhPhone, { autoDelivered: false });
     phone.send(msg({ client_msg_id: 'd1', body: 'hello' }));
     const id = ((await phone.expect('msg_ack')) as MsgAckFrame).message_id;
     await khanh.expect('deliver');
     await settle();
 
-    expect(await srv.ctx.ports.cursors.deliveryCursors('c1')).toEqual(new Map([['A1', id], ['B1', id]]));
+    expect(await srv.ctx.ports.cursors.deliveryCursors('c1')).toEqual(new Map([['A1', id]]));
     expect(await srv.ctx.ports.cursors.readCursors('c1')).toEqual(new Map([['truc', id]]));
-    expect(traceRows('receipt')).toContain(`delivery_cursors[c1] ← #${id} for Truc·phone (sender), Khanh·phone (over the socket)`);
+    expect(traceRows('receipt')).toEqual([`delivery_cursors[c1] ← #${id} for Truc·phone (sender)`]);
+
+    khanh.send({ t: 'delivered', conversation_id: 'c1', up_to_message_id: id }); // the device stored it: now it is delivered
+    await settle();
+    expect(await srv.ctx.ports.cursors.deliveryCursors('c1')).toEqual(new Map([['A1', id], ['B1', id]]));
+    expect(traceRows('receipt')).toEqual([`delivery_cursors[c1] ← #${id} for Truc·phone (sender)`, `delivered c1 ≤ #${id} by Khanh·phone`]);
   });
 
   test('a registered device without a socket gets a push hint: conversation, message id, sender display name; never the body', async () => {

@@ -3,7 +3,7 @@ import { statusOf } from '../../src/receipts/status.js';
 import type { DeviceRecord } from '../../src/ports/index.js';
 import type { Message, MsgAckFrame } from '../../src/protocol.js';
 import { createChatServer, type ChatServer } from '../../src/server.js';
-import { ScriptedClient } from '../harness/ScriptedClient.js';
+import { ScriptedClient, type ScriptedClientOptions } from '../harness/ScriptedClient.js';
 import { DEVICES, type FixtureDevice } from '../../src/fixtures.js';
 
 const message = (over: Partial<Message> = {}): Message => ({
@@ -69,8 +69,8 @@ describe('GET /conversations/:id/messages/:message_id/status?user_id= (design §
     server = await createChatServer({ port: 0, seed: true });
     return server;
   };
-  const connect = async (device: FixtureDevice): Promise<ScriptedClient> => {
-    const c = new ScriptedClient(device, { url: server!.url, trace: server!.ctx.trace });
+  const connect = async (device: FixtureDevice, opts: Partial<ScriptedClientOptions> = {}): Promise<ScriptedClient> => {
+    const c = new ScriptedClient(device, { url: server!.url, trace: server!.ctx.trace, ...opts });
     clients.push(c);
     await c.connect();
     await c.hello();
@@ -102,7 +102,9 @@ describe('GET /conversations/:id/messages/:message_id/status?user_id= (design §
   test('status flips sent → delivered → read as the cursors move; nothing is stored per message', async () => {
     await start();
     const phone = await connect(DEVICES.trucPhone);
-    const khanh = await connect(DEVICES.khanhPhone);
+    // B11: *delivered* is the device's word, not the push. The automatic frame is off so the
+    // reading between the push and the frame is visible; the frame then plays the device.
+    const khanh = await connect(DEVICES.khanhPhone, { autoDelivered: false });
 
     phone.send({ t: 'msg', client_msg_id: 's1', conversation_id: 'c3', body: 'to linh, whose bot is offline' });
     const toLinh = ((await phone.expect('msg_ack')) as MsgAckFrame).message_id;
@@ -112,6 +114,10 @@ describe('GET /conversations/:id/messages/:message_id/status?user_id= (design §
     phone.send({ t: 'msg', client_msg_id: 's2', conversation_id: 'c1', body: 'to khanh, live' });
     const toKhanh = ((await phone.expect('msg_ack')) as MsgAckFrame).message_id;
     await khanh.expect('deliver');
+    await settle();
+    expect(await status('c1', toKhanh, 'truc')).toEqual({ code: 200, body: { status: 'sent', read_by: [], delivered_to: [] } }); // pushed, not yet stored by the device
+
+    khanh.send({ t: 'delivered', conversation_id: 'c1', up_to_message_id: toKhanh });
     await settle();
     expect(await status('c1', toKhanh, 'truc')).toEqual({ code: 200, body: { status: 'delivered', read_by: [], delivered_to: ['B1'] } });
 
