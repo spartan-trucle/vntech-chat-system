@@ -1,7 +1,8 @@
 # Rubric run — specification §7 against the design
 
-Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1) after A3 decision 1 closed
-service discovery; no row was re-scored, only the gaps behind rows 3, 7 and 8 changed.
+Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1, A3.2) after A3 decisions 1 and
+2 closed service discovery and reply quoting; no row was re-scored, only the gaps
+behind rows 3, 7 and 8 changed.
 Run against [`design.md`](design.md),
 [`estimation.md`](estimation.md), [`tradeoffs.md`](tradeoffs.md),
 [`diagrams/flows.md`](diagrams/flows.md), [`diagrams/high-level.html`](diagrams/high-level.html),
@@ -14,11 +15,11 @@ to epic A3.
 |---|------|-------|-------------------|
 | 1 | Requirements | **fail** | N2 (availability) and N6 (security) are neither addressed nor explicitly deferred |
 | 2 | Estimation | pass | |
-| 3 | Architecture | pass | caveat: one flow ends at a note marked open (reply quoting); the service-discovery note in flows 2 and 5 was cleared 2026-11-02 |
+| 3 | Architecture | pass | no caveat left: the open notes in flows 2, 5 (service discovery) and 9 (reply quoting) were cleared 2026-11-02 |
 | 4 | Storage | pass | |
 | 5 | Media | pass | |
 | 6 | Delivery | pass | caveat: the fan-out threshold is a product boundary (100 → write, 10 k+ → read), not a computed crossover |
-| 7 | Trade-offs | **fail** | three §5 bullets, or halves of bullets, have no decision and so no rejected alternative (five on 2026-11-01; 5.2.2 and 5.8.1 closed 2026-11-02) |
+| 7 | Trade-offs | **fail** | two §5 bullets have no decision and so no rejected alternative (five on 2026-11-01; 5.2.2, 5.8.1 and 5.3.5 closed 2026-11-02) |
 | 8 | Failure modes | **fail** | store-primary loss has no recovery story; single-server loss has a complete one since 2026-11-02 |
 | 9 | Clarity | pass | |
 
@@ -44,7 +45,7 @@ which the roadmap did not predict, on N2 and N6.
 | F7 online indicator | design §5, ADR presence, flow 5 | addressed |
 | F8 status per member | design §3.2–§3.3, flow 6 | addressed |
 | F9 media ≤ 10 MB, no server processing | design §6, ADR media, flow 8 | addressed |
-| F10 quoted reply | `reply_to` storage and jump-to-parent in design §2.2–§2.3; the quoting policy is listed open in `tradeoffs.md` 5.3.5 and routed to A3 | addressed in part, remainder explicitly deferred |
+| F10 quoted reply | `reply_to` storage, the `parents` map on the page API, the deleted-parent placeholder as a render rule and jump-to-parent in design §2.2–§2.3 (quoting decided 2026-11-02) | addressed |
 | F11 auto-reconnect | design §1.4, flow 2 | addressed |
 | N1 latency p50/p99 server to server | latency-budget paragraph; flow 1 marks the measured span | addressed |
 | N2 availability 99.99 % send/receive | **nowhere.** No section states how the send/receive path reaches four nines: replica placement, what a Redis or chat-server loss does to availability as opposed to latency, degraded modes. The board's CAP note ("a partition degrades to delayed, never cannot send") is the only sentence near it | **not addressed, not deferred** |
@@ -86,13 +87,11 @@ asking a question.* (§4.2 now lists nine flows; all nine are drawn.)
   send, offline and history/media paths.
 - Every arrow traces to a `design.md` section or the board; nothing is drawn that the
   design does not say.
-- **Caveat, not a fail:** one trace ends at a note marked *open*: how the quoted
-  excerpt is rendered (flow 9). The newcomer learns that the design has not decided,
-  which is an answer; the decision itself is scored in row 7. Under a stricter reading
-  this row fails until A3 closes it. On 2026-11-01 flows 2 and 5 carried a second open
-  note, which registry answers `GET /chat-servers`; closed 2026-11-02 (no registry, a
-  load balancer with an app-level health check; the lease is the only cleanup), and
-  the two flows now draw the balancer and the lease expiry.
+- **No caveat left.** On 2026-11-01 two traces ended at a note marked *open*: which
+  registry answers `GET /chat-servers` (flows 2 and 5) and how the quoted excerpt is
+  rendered (flow 9). Both closed 2026-11-02: flows 2 and 5 draw the load balancer and
+  the lease expiry (no registry); flow 9 draws the page response carrying `parents`,
+  the render from the parent and the deleted-parent placeholder as a render rule.
 - Also noted: the spec row says "seven flows" while §4.2 has nine. The spec grew
   (media and reply were added) and the rubric row was not updated. Not a design gap;
   flagged to the hub.
@@ -151,15 +150,15 @@ fan-out has a stated threshold.*
 - `tradeoffs.md` has one entry per §5 bullet (30) in chosen / rejected / why form,
   and 27 of them name at least one rejected alternative from the design's own tables
   or an ADR.
-- **Gap:** the three bullets, or halves of bullets, that are open in `tradeoffs.md`
-  have no decision and therefore no rejected alternative:
-  - 5.3.5 reply quoting (denormalized excerpt vs resolved by ID on render)
+- **Gap:** the two bullets that are open in `tradeoffs.md` have no decision and
+  therefore no rejected alternative:
   - 5.8.2 message-store primary failure
   - 5.8.4 the five metrics to page on
-- Closed 2026-11-02 (ADR `2026-11-02-no-service-registry.md`): 5.2.2 client-facing
-  half and 5.8.1 cleanup half, which were the other two gaps on 2026-11-01. Both
-  entries now name their rejected alternatives (a registry, a liveness watcher, a
-  30 s lease TTL).
+- Closed 2026-11-02: 5.2.2 client-facing half and 5.8.1 cleanup half (ADR
+  `2026-11-02-no-service-registry.md`: a registry, a liveness watcher and a 30 s lease
+  TTL rejected), and 5.3.5 quoting half (ADR `2026-11-02-reply-quote-by-id.md`: a
+  denormalized excerpt and per-quote client fetches rejected). These were the other
+  three gaps on 2026-11-01.
 - Also thin, though not failing: 5.3.3 (only `created_at` was argued against
   Snowflake; the spec's other candidates were not), 5.4.2 and 5.4.5 (the rejected
   option is the one implied by the chosen sentence, with no table row behind it).
@@ -211,8 +210,8 @@ Each item names the spec bullet it closes and the rubric row it moves.
 
 | # | Decision | Closes | Moves |
 |---|----------|--------|-------|
-| 1 | **Closed 2026-11-02.** Service discovery: no registry; a load balancer with an application-level health check and random assignment chooses the server, "least-loaded" dropped; nobody runs `mark-all-offline`, the client's reconnect heals routing and the 5 min lease is the only presence cleanup. ADR `2026-11-02-no-service-registry.md`; written into design §1.4, §1.5, §5.3, §5.5, tradeoffs 5.2.2, 5.8.1, flows 2 and 5 (A3.1) | §5.2.2, §5.8.1 (cleanup half) | done: rows 7 and 8 lost this gap, the open notes in flows 2 and 5 are gone; both rows still fail on items 2 to 5 |
-| 2 | Reply quoting: quoted excerpt denormalized into the reply row, or resolved by ID on render; what the reply shows when the parent is deleted | §5.3.5, F10, flow 9 | row 7; clears the open note in flow 9 |
+| 1 | **Closed 2026-11-02.** Service discovery: no registry; a load balancer with an application-level health check and random assignment chooses the server, "least-loaded" dropped; nobody runs `mark-all-offline`, the client's reconnect heals routing and the 5 min lease is the only presence cleanup. ADR `2026-11-02-no-service-registry.md`; written into design §1.4, §1.5, §5.3, §5.5, tradeoffs 5.2.2, 5.8.1, flows 2 and 5 (A3.1) | §5.2.2, §5.8.1 (cleanup half) | done: rows 7 and 8 lost this gap, the open notes in flows 2 and 5 are gone; both rows still fail on items 3 to 5 |
+| 2 | **Closed 2026-11-02.** Reply quoting: resolved by ID on render, no excerpt stored; the page API returns a `parents` map read by key in one batch; a deleted parent renders as F10's placeholder by a render rule; jump-to-parent unchanged. ADR `2026-11-02-reply-quote-by-id.md`; written into design §2.2, §2.3, tradeoffs 5.3.5, flow 9 (A3.2) | §5.3.5, F10, flow 9 | done: row 7 lost this gap, row 3 has no caveat left; row 7 still fails on items 3 and 5 |
 | 3 | Message-store primary (replica-set) failure: what the sender sees, how long the ack path waits, what the outbox does, the bound on loss, and the recovery steps | §5.8.2, N2 | rows 1, 8 |
 | 4 | Backpressure: move the board's bounded per-destination buffer and drop-to-stream rule into `design.md` with its budget | §5.8.3 | row 8 (the design text, not a new decision) |
 | 5 | Observability: the five metrics to page on | §5.8.4 | row 7 |

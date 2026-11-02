@@ -436,16 +436,28 @@ sequenceDiagram
 
   Note over A: the user replies to a message from last month. The parent is on A's screen, so its message_id is known.
   A->>CSA: msg {client_msg_id, conversation_id, body, reply_to: parent message_id}
-  CSA->>MS: INSERT messages (reply_to = parent message_id), the parent's Snowflake ID in a nullable column
+  Note over CSA: the handler rejects a reply_to whose conversation differs (F10, one parent, same conversation)
+  CSA->>MS: INSERT messages (reply_to = parent message_id), the parent's Snowflake ID only, no excerpt copied (decided 2026-11-02)
   MS-->>CSA: written
   CSA-->>A: msg_ack
   CSA->>R: XADD sq:{device}, route lookup, as in flow 1
   CSA->>CSB: push deliver
   CSB->>B: deliver {message, reply_to: parent message_id}
+  alt the parent is in B's local cache (B saw it earlier, or it came with a page)
+    B->>B: render the quote from the cached parent, its current text
+  else B has not got the parent
+    Note over B: the quote waits for the next page read. No request per quote is ever made.
+  end
 
-  Note over A,API: OPEN, not decided (A3, spec §5.3 last bullet, tradeoffs.md 5.3.5): is the quoted excerpt denormalized into the reply row, or resolved by ID when the reply is rendered? design.md §2.2 stores the ID only and §2.3 gives a fetch path, but neither is a verdict. The board's F10 row and the simulated client lean to fetch by ID with a placeholder. No arrow below renders the quote.
+  Note over B,API: B opens the conversation later, or scrolls up to the reply
+  B->>API: GET /conversations/{id}/messages?limit=50 (or before=)
+  API->>MS: SELECT the page from (conversation_id, bucket)
+  API->>MS: SELECT by key every parent a reply_to in the page references and the page lacks, one batch, bucket from each parent's Snowflake ID
+  MS-->>API: page rows and the parents found
+  API-->>B: {messages, parents: {message_id to message}, next_before}
+  Note over B: render rule. Parent in the page or in parents: quote its current text. Parent absent, because deleted: the reply still shows, with a message unavailable placeholder (F10). The cache keeps every parent seen.
 
-  opt the user taps the quote to jump to the parent (F10, design §2.3)
+  opt the user taps the quote to jump to the parent (F10, design §2.3, unchanged)
     alt parent is in B's local cache
       B->>B: scroll to it
     else parent is outside the loaded window (last month)
@@ -462,6 +474,8 @@ sequenceDiagram
   end
 ```
 
-What it answers: `reply_to` is stored as the parent's ID (§2.2); a parent outside the
-loaded window is fetched by key and paged around (§2.3); the quoting choice is open and
-is drawn as a note, not a guess.
+What it answers: `reply_to` is stored as the parent's ID and nothing else (§2.2); the
+quote is resolved from the parent on render, with the page API carrying the referenced
+parents in one batched key read and the deleted-parent placeholder as a render rule
+(§2.3, ADR 2026-11-02); a parent outside the loaded window is fetched by key and paged
+around only when the user jumps to it (§2.3).

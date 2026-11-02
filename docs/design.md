@@ -34,6 +34,13 @@ from the client side within the 15 s mirror rule, and presence is cleaned by the
 existing lease (renew every 2 min, 5 min TTL), so the presence window on a node loss is
 up to 5 min, not seconds. ADR: `.memory/decisions/2026-11-02-no-service-registry.md`.
 
+Reply quoting (decided 2026-11-02): **the reply row stores only `reply_to`; no excerpt
+is copied.** The quote is resolved from the parent when the reply is rendered, so an
+edited or deleted parent shows correctly in every child (its current text, or F10's
+"message unavailable" placeholder). The page API carries the referenced parents in one
+batched key read (§2.3), so the client never fetches one parent per quote. ADR:
+`.memory/decisions/2026-11-02-reply-quote-by-id.md`.
+
 ---
 
 ## 1. Connection keep-alive, disconnect detection and reconnect
@@ -229,6 +236,12 @@ messages (
   sequential read.
 - `client_msg_id` lives here so the dedup check in §1.4 is a single row lookup via a
   secondary index on `(sender_id, client_msg_id)` with a 24 h TTL table, not a scan.
+- `reply_to` is the whole reference: **no excerpt of the parent is stored in the reply
+  row** (decided 2026-11-02, ADR `2026-11-02-reply-quote-by-id.md`). The quote is
+  resolved from the parent on render, so every message has one source of truth and an
+  edit or delete, when §8.5 brings them, touches one row. F10 forbids a parent from
+  another conversation; the schema does not, so the `msg` handler rejects a `reply_to`
+  whose conversation differs, and the store never checks.
 
 ### 2.3 Read paths
 
@@ -239,7 +252,8 @@ GET /conversations/{id}/messages?limit=50
 → bucket = current month
 → SELECT … WHERE conversation_id=? AND bucket=? LIMIT 50
 → if fewer than 50 rows, repeat for bucket−1, until 50 rows or bucket < conversation.created_bucket
-→ response: { messages[50], next_before: <smallest message_id returned> }
+→ parents = every reply_to in the page not already in it, SELECT by key in one batch
+→ response: { messages[50], parents: { message_id → message }, next_before: <smallest message_id returned> }
 ```
 
 The bucket walk is bounded by conversation age and almost always stops at the first
@@ -253,7 +267,19 @@ GET /conversations/{id}/messages?before={message_id}&limit=50
 → bucket = month(before)    -- Snowflake carries the timestamp; no lookup needed
 → SELECT … WHERE conversation_id=? AND bucket=? AND message_id < ? LIMIT 50
 → same bucket walk backwards if short
+→ parents, as above
+→ response: { messages, parents, next_before }
 ```
+
+**`parents`** (decided 2026-11-02, ADR `2026-11-02-reply-quote-by-id.md`): the map of
+every message referenced by a `reply_to` in the page and not already in it, so the
+client renders each quote from the parent without a request of its own. The server
+reads them by key, `(conversation_id, bucket, message_id)`, in one batched request;
+the bucket comes from the parent's Snowflake timestamp, so a parent in a cold month is
+one slow read, never a walk. Bounded by the page: at most 50 parents, and parents
+inside the page are not re-read. The device cache (§2.4) keeps parents it has seen. A
+`reply_to` whose parent is gone is absent from the map and renders as F10's "message
+unavailable" placeholder, a render rule, not a storage rule.
 
 Cursor pagination, not offset: offsets are O(n) in a wide-column store and break when
 messages are inserted while the user scrolls.
@@ -272,7 +298,8 @@ They never meet: history below `oldest_loaded` is fetched on demand; everything 
 
 **Jump to a quoted reply's parent (F10)** that is outside the loaded window:
 `GET /conversations/{id}/messages/{message_id}` by key, then page *around* it with
-`before` and `after`. Not a scroll-up loop.
+`before` and `after`. Not a scroll-up loop. Unchanged by the quoting decision: the
+quote itself never needs this path, since the parent came with the page.
 
 ### 2.4 Client cache
 
