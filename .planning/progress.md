@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-01, report round 14 (B8 merged 3505098, C2 written 82c53d1; all B epics and C2 on main; A3 under debate, three new author questions from C2)
+Last updated: 2026-11-02, report round 15 (B9 started on the author's ask; A3 service discovery decided in debate, ADR pending)
 
 ## Epics
 
@@ -12,7 +12,7 @@ Last updated: 2026-11-01, report round 14 (B8 merged 3505098, C2 written 82c53d1
 | A1 tradeoffs.md | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
 | A2 sequence diagrams | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
 | A4 rubric run | A | 1 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
-| A3 open decisions | hub + author | 2 | in_progress: service discovery (decision 1) under debate | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
+| A3 open decisions | hub + author | 2 | decision 1 (service discovery) decided 2026-11-02, ADR and design text pending; 8 more open | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
 | B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
 | B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
@@ -23,7 +23,7 @@ Last updated: 2026-11-01, report round 14 (B8 merged 3505098, C2 written 82c53d1
 | B7 media stub | B | 2 | merged (83c4e88) | claude/b-prototype-297ab9 @ d7ea3ea | 133 passed (lane) | `MsgFrame` carried `media_key` only; roadmap B0 dropped size, mime, sha256 that design §6.2 sends. Hub asked lane B to add them (roadmap error, not a design question) | none |
 | B3 sync queue replay | B | 3 | merged (806a9ec) | claude/b-prototype-297ab9 @ 27365ec | 242 passed (lane, 3 runs), 212 alone | core defect: per-connection frame chain held acks behind hello during replay; fixed in core. Client acks on a heuristic (batch size or 20 ms gap) since nothing on the wire marks batch end | none |
 | B8 scenario suite | B | 4 | merged (3505098) | claude/b-prototype-297ab9 @ 252f739 | 258 passed (2 runs); scenarios 6/6 fake time and S1+S5 on real timers | S1: server debounce expiry (t+11+5) coincides with the client's first reconnect (15+1), watcher sees offline then online in the same second; 250 queued messages ≈ 1500 trace rows, near the 2000 cap | none |
-| B9 real Redis | B | 5 (optional) | not started, awaiting the author's ask | | | ports and contract tests ready | author |
+| B9 real Redis | B | 5 (optional) | in_progress (subagent, own worktree; Docker Redis on port 6399; adapters for sync queue, route table, presence store, presence bus; B0 contract tests against both implementations) | claude/b-prototype-297ab9 | | | none |
 | C1 integrate (per epic) | C | continuous | done for every B and A epic; idle until A3 produces text | main @ 82c53d1 | 258 passed + scenarios 6/6 on merged tree | none | none |
 | C2 retrospective | C | 4 | done (82c53d1) | main | n/a | 15 findings in design.md §7, six written back in place, four ADRs amended, board section, README and memory links | three questions for the author, listed below |
 
