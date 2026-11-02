@@ -28,7 +28,9 @@ at Messenger / WhatsApp scale.
   a scripted multi-device client, and the six scenarios the runtime ADR defines as done (S1 unclean drop, S2 replay
   from the cursor, S3 dedup, S4 list before replay, S5 presence debounce, S6 media metadata only), all passing. One
   process, no auth, no persistence, no multi-server. Run `npm test` and `npm run scenarios` in `prototype/`; the
-  scenario table is in [`prototype/README.md`](prototype/README.md).
+  scenario table is in [`prototype/README.md`](prototype/README.md). Optional: `npm run redis:up` and
+  `npm run test:redis` run the sync queue, route table, presence lease and presence bus against a real Redis 7
+  through the same port contracts, which is what showed the three Redis facts the in-memory adapters hid.
 
 Companion to the other `vntech-*` systems talks:
 [vntech-load-balancer](https://github.com/spartan-trucle/vntech-load-balancer),
