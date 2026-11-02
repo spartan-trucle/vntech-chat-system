@@ -15,11 +15,11 @@ second bullet of §5.3).
 
 Bullets, or halves of bullets, with no decision anywhere in the design. They are the
 input to epic A3; they are not answered here. Closed since the first run: 5.2.2 and
-5.8.1, by the service-discovery ADR of 2026-11-02 (entries below).
+5.8.1, by the service-discovery ADR of 2026-11-02, and 5.3.5, by the reply-quoting ADR
+of the same day (entries below).
 
 | ID | Bullet | What is open | Where the raw material is |
 |----|--------|--------------|---------------------------|
-| 5.3.5 | Reply reference | whether the quoted excerpt is **denormalized into the reply row or resolved by ID on render**. `reply_to` is stored as the parent's message ID (decided, entry 5.3.5 below) and §2.3 has the fetch-by-ID path for a parent outside the loaded window, but `design.md` gives no verdict. The board's requirement table (F10) and the simulated client already say "fetch by ID, placeholder if the parent is gone"; the design document has not caught up or the board is ahead of it. A3 must say which | design §2.2, §2.3; board F10; `prototype/index.html` |
 | 5.8.2 | Message-store primary failure | no recovery story is written. The board's CAP answer (Component 2: RF 3, quorum writes, "a partition degrades to delayed, never cannot send") is the raw material, but there is no section on what the sender sees, what is lost, and how the ack path behaves while a replica set is degraded | board Component 2 |
 | 5.8.4 | Observability | the five metrics to page on are not named anywhere | — |
 
@@ -230,15 +230,27 @@ Not a §5 bullet but open on the board for the same reason: **production runtime
   Snowflake ID, nullable. A parent outside the device's loaded window is fetched by
   key, `GET /conversations/{id}/messages/{message_id}`, then paged around with
   `before` and `after`. Design §2.2, §2.3.
-- **Open (quoting half):** whether the quoted excerpt is denormalized into the reply
-  row or resolved by ID on render, and what the row holds when the parent is
-  deleted. See the open list. The board (F10) and the simulated client say fetch by
-  ID with a placeholder; `design.md` has not decided.
-- **Rejected:** nothing recorded.
+- **Chosen (quoting half, decided 2026-11-02):** **resolved by ID on render; no
+  excerpt is copied into the reply row.** The page API carries the parents:
+  `GET /conversations/{id}/messages` returns a `parents` map of every message a
+  `reply_to` in the page references and the page does not contain, read by key from
+  the store in one batch, bucket from the parent's Snowflake ID. The client never
+  issues one request per quote; the device cache keeps parents it has seen. A parent
+  that is gone is absent from the map and renders as F10's "message unavailable"
+  placeholder, a render rule. The `msg` handler rejects a `reply_to` from another
+  conversation. Jump-to-parent is unchanged. Design §2.2, §2.3; ADR
+  `2026-11-02-reply-quote-by-id.md`.
+- **Rejected:** a denormalized excerpt in the reply row (ADR: stale on edit, survives
+  delete, and F10's placeholder would need a second write path into every child,
+  prebuilding the §8.5 edit/delete follow-up wrong); resolve by ID with the client
+  fetching each missing parent (ADR: one `GET /messages/{id}` per quoted parent
+  outside the page, tens of requests on a reply-heavy scroll).
 - **Why:** the ID reference is forced by F10 (one parent, same conversation) and by
-  the Snowflake decision; the quoting policy is the part with a real trade (stale
-  excerpt vs an extra read on render) and has not been argued.
-- **Number:** none.
+  the Snowflake decision; one source of truth per message makes edit and delete a
+  one-row change and the placeholder a render rule; the server reads the same keys
+  the client would, in one batch instead of tens.
+- **Number:** design §2.3: a page is 50 messages, so `parents` is at most 50 extra
+  rows, the accepted cost; a cold-bucket parent is one keyed read, no walk.
 
 ## 5.4 Media
 
