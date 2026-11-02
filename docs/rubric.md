@@ -1,15 +1,16 @@
 # Rubric run — specification §7 against the design
 
-Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1 to A3.5) after A3 decisions
+Run on 2026-11-01 (epic A4), updated 2026-11-02 (A3.1 to A3.6) after A3 decisions
 1 to 3 closed service discovery, reply quoting and store replica loss (with the N2 half
 of item 6), the live-first ADR closed board items 10 and 11 (replay-to-live handoff,
-per-stream append order) and the replay-mode ADR closed item 7 (end of replay); no row
-was re-scored, only the gaps behind rows 1, 3, 7 and 8 and the delivery lines of row 6
-changed. The scores are the author's to re-run.
+per-stream append order), the replay-mode ADR closed item 7 (end of replay) and the
+delivered-receipt ADR closed item 8 (delivery cursor); no row was re-scored, only the
+gaps behind rows 1, 3, 7 and 8 and the delivery lines of row 6 changed. The scores are
+the author's to re-run.
 Run against [`design.md`](design.md),
 [`estimation.md`](estimation.md), [`tradeoffs.md`](tradeoffs.md),
 [`diagrams/flows.md`](diagrams/flows.md), [`diagrams/high-level.html`](diagrams/high-level.html),
-the nine ADRs in `.memory/decisions/` and the discussion page. Each row restates the
+the ten ADRs in `.memory/decisions/` and the discussion page. Each row restates the
 spec's pass condition as a checklist, cites where each item is, and scores **pass** or
 **fail**. A fail names the concrete gap; the gaps are collected at the end as the input
 to epic A3.
@@ -252,5 +253,15 @@ persists the cursor on the client's cadence (100 frames or 500 ms, the author's 
 confirm) and is never a credit; replay mode runs from `hello` or from a dropped push to
 `replay_done`, and a dropped push makes the server re-replay that connection alone.
 Written into design §4.4, §4.7, §7.3, §7.8, tradeoffs 5.5.2c and 5.8.3, flows 2 and 3
-(A3.5). Item 8 (delivery cursor, B5 finding 10) stays open and is to be decided on this
-ack, not on push-to-socket.
+(A3.5).
+
+Board item 8 (delivery cursor, B5 finding 10, design §7.3), likewise never a row of this
+table, **closed 2026-11-02** by ADR `2026-11-02-delivered-receipt-device-stored.md`:
+*delivered* means the device stored the message; the client sends
+`delivered{conversation_id, up_to_message_id}` after the store write in replay and live
+mode alike, coalesced per conversation per 2 s, with a resend after `replay_done` for
+every conversation whose stored and acknowledged ids differ; the server runs `max` into
+`delivery_cursors` with no per-connection state; the push-to-socket advance is
+withdrawn; `ack{up_to_stream_id}` stays the sync cursor only. Written into design §3.4,
+§4.4, §7.3, tradeoffs 5.6.3a, flows 2 and 6 (A3.6). Flow 1's `receipt delivered` line
+keeps its old spelling for item 12.

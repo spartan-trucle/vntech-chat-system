@@ -542,8 +542,8 @@ Not a spec bullet: board item 7, found in B3 (design §7.3), decided 2026-11-02.
   members who currently have that conversation open, and to the reader's own other
   devices (which clear their badge). Members not looking get the cursor when they
   next open the chat, from the partition. Delivered receipts follow the same shape
-  keyed by device. Sender-side status is derived from the cursors, never stored.
-  Design §3.3–§3.5.
+  keyed by device (5.6.3a). Sender-side status is derived from the cursors, never
+  stored. Design §3.3–§3.5.
 - **Rejected:** one receipt row per message per member; push every receipt to every
   member; per-device read cursor; a stored unread counter (all §3.7).
 - **Why:** reading is monotonic, so "how far has each member read" is one number
@@ -553,6 +553,44 @@ Not a spec bullet: board item 7, found in B3 (design §7.3), decided 2026-11-02.
 - **Number:** estimation §3.4: receipt writes ≈ 25 % of deliveries after coalescing,
   175 k/s peak, to tiny partitions; cursor rows 250 GB + 375 GB. Design §3.2's
   15 000 frames per message is the figure that killed the per-message shape.
+
+### 5.6.3a Delivered receipt
+
+Not a spec bullet: board item 8, from B5 finding 10 (design §7.3), decided 2026-11-02.
+
+- **Chosen:** *delivered* means the device stored the message in its local store. The
+  client sends `delivered{conversation_id, up_to_message_id}` in replay mode and in
+  live mode alike, after the store write, coalesced to at most one per conversation
+  per 2 s, the read receipt's rule and number. The server runs
+  `SET last_delivered_id = max(last_delivered_id, up_to_message_id)` on
+  `delivery_cursors` and keeps no per-connection state and no stream-id mapping. The
+  prototype's push-to-socket advance is withdrawn. The replay `ack{up_to_stream_id}`
+  is unchanged and stays the sync cursor only (5.5.2c): the two frames have different
+  keys and owners, one Redis stream id per device owned by the device, one Snowflake
+  per conversation per device owned by the server for F8. Resend: the client keeps per
+  conversation the highest `message_id` stored and the highest it sent a `delivered`
+  for, and after `replay_done` on a new connection sends one `delivered` for every
+  conversation where the two differ. Derived status (design §3.3) is unchanged. Design
+  §3.4, §4.4; ADR `2026-11-02-delivered-receipt-device-stored.md`.
+- **Rejected:** advancing the delivery cursor at the push-to-socket moment (the
+  prototype, B5 finding 10: overstates delivery for a dropped push, for as long as the
+  re-replay takes or, if the connection dies first, until the next reconnect);
+  advancing it on the replay ack only (the §7.3 proposal: the ack exists only in replay
+  mode, so an online recipient receiving live pushes produces no delivered signal at
+  all); extending the ack to both modes with a server-side map from `stream_id` to
+  `(conversation_id, message_id)` per connection (one frame type, but state that
+  belongs to nobody when the server dies, and the client cannot resend because it keeps
+  nothing per conversation); delivered at the moment the socket flush is confirmed (TCP
+  accepted is not stored: a device that crashes after the read shows delivered for a
+  message it will replay later).
+- **Why:** the author's definition excludes every server-side signal, so a client-sent
+  one in both modes is necessary, and a receipt keyed the way `delivery_cursors` is
+  keyed needs no mapping and no per-connection state on the server. `max` makes a lost
+  receipt self-healing and the resend rule covers the coalescing window. The ack keeps
+  its single meaning from item 7.
+- **Number:** estimation §3.4 already budgets ≈ 175 k receipt writes/s at peak after
+  coalescing, and this receipt was in that number; the client's cost is two integers
+  per conversation in a store that already sorts by `message_id`.
 
 ## 5.7 Presence
 
