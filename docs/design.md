@@ -489,8 +489,29 @@ who currently have that conversation open; members not looking at it get the cur
 when they next open it, by reading the partition. Nobody is pushed receipts for a chat
 they are not watching.
 
-Delivered receipts follow the same shape, keyed by device, sent by the client when the
-sync queue hands it new messages.
+**Delivered receipts** follow the same shape, keyed by device (decided 2026-11-02, ADR
+`2026-11-02-delivered-receipt-device-stored.md`). *Delivered* means the device stored
+the message in its local store; nothing the server can observe (a push handed to the
+socket, a flush confirmed) counts. The client sends
+`delivered{conversation_id, up_to_message_id}` in replay mode and in live mode alike,
+after the message is in the local store, coalesced to at most one per conversation per
+2 s, the read receipt's rule and number. The server runs
+`SET last_delivered_id = max(last_delivered_id, up_to_message_id)` on `delivery_cursors`
+(§3.3), idempotent and commutative, and keeps no per-connection state and no mapping
+from stream ids. The prototype's rule, advance the delivery cursor when the push is
+handed to the socket, is withdrawn (§7.3). The replay `ack{up_to_stream_id}` is a
+different frame with a different key and owner and stays the sync cursor only (§4.4).
+
+Resend after reconnect: the client keeps two ids per conversation, the highest
+`message_id` it stored and the highest `message_id` it sent a `delivered` for. After
+`replay_done` on a new connection it sends one `delivered` for every conversation where
+the two differ, which covers receipts lost when the previous connection dropped inside
+the coalescing window. A receipt that reaches a server which dies before the Cassandra
+write is accepted as rare and self-healing: `max` means the next delivered message in
+that conversation covers it. Derived status (§3.3) is unchanged: for the sender,
+*delivered* means every device of every other member has a cursor at or above the id,
+and an offline device holds the status at *sent* until it reconnects and stores the
+message, which is what F8 means.
 
 ### 3.5 Unread state
 
@@ -742,9 +763,16 @@ Client rules:
   store sorted by `message_id` (above).
 
 "End of replay" is therefore a boundary the connection can cross many times, not an
-event that happens once per connection. Item 8 (the delivery cursor of §3.4, B5
-finding 10 in §7.1) is to be decided on this same `ack{up_to_stream_id}`, not on
-push-to-socket; decided separately, but on this mechanism, not another.
+event that happens once per connection.
+
+**The delivered receipt rides beside the ack, not on it** (decided 2026-11-02, ADR
+`2026-11-02-delivered-receipt-device-stored.md`). In both modes the client also sends
+`delivered{conversation_id, up_to_message_id}` after each store write, coalesced per
+conversation (§3.4). The two frames carry different keys for different owners:
+`ack{up_to_stream_id}` is one Redis stream id per device, owned by the device, and
+persists the sync cursor only; `delivered` is one Snowflake per conversation per
+device, owned by the server for F8. Item 8 (B5 finding 10 in §7.1) was decided on the
+receipt, not on this ack.
 
 ### 4.5 Bounds
 
@@ -1032,7 +1060,7 @@ ports.
 | 7 | B2 | "Pending" on the bounded per-destination buffer has tick granularity: the socket library reports a flush on the next tick, so every push issued within one tick counts as pending even on a healthy socket; the bound must leave room for one tick's worth of fan-out. On loopback the kernel absorbs about 0.5 MB before a blackholed peer backs the writer up, so the backpressure test corks the socket. | Input to the backpressure write-up, A3 item 4 (7.8) |
 | 8 | B7, S6 | The roadmap's `msg` frame omitted `media_size`, `media_mime` and `sha256`, which §6.2 sends; the build followed the roadmap until the gap showed and was fixed across the protocol, the core and the messaging module. | **No**: the design was right. A plan must quote the design's frame, never paraphrase it |
 | 9 | B3 | Two notes for real Redis (B9): "empty `XRANGE`, then flip to live" leaves a window where an append lands after the empty read and before the flip, so one more `XRANGE` after the flip is needed; in one process the flip is in the same microtask drain, so the prototype is safe without it. And deciding "trimmed past the cursor" needs the stream's oldest retained id (`XINFO STREAM`), a fourth operation; `MAXLEN` eviction must be reported the same way. | **Yes**, sync-queue ADR amended (7.3) |
-| 10 | B5, C review | Delivery cursors advance when the push is handed to the socket, not on a client-sent delivered receipt as §3.4 says, because the protocol has no such frame. A push lost to the backpressure timeout therefore still counts as delivered. | **Item 8, open**, to be decided on the replay `ack{up_to_stream_id}` of ADR `2026-11-02-replay-mode-boundary.md`, not on push-to-socket (7.3, §4.4) |
+| 10 | B5, C review | Delivery cursors advance when the push is handed to the socket, not on a client-sent delivered receipt as §3.4 says, because the protocol has no such frame. A push lost to the backpressure timeout therefore still counts as delivered. | **Closed 2026-11-02** by removal of the push-to-socket advance: the client sends `delivered{conversation_id, up_to_message_id}` after its store write in both modes (§3.4, 7.3, ADR `2026-11-02-delivered-receipt-device-stored.md`) |
 | 11 | B4 | The HTTP router is first-match, so a core test's probe route collided with the real page route; the unread count has no sender filter until the sender's own read cursor advances on store, which B5 does. | No |
 | 12 | B6 | Once every client frame type has a handler, the core's unhandled-frame path has no test probe left. | No (prototype note) |
 | 13 | B1 | One client test mixes fake and real time and fails about once in ten full-suite runs under load; the scenarios use larger budgets. | No (prototype note) |
@@ -1086,8 +1114,14 @@ Three things the queue section does not say, found while building B3 and B5.
   hands it new messages; the protocol (B0) has only the read receipt, so the prototype
   advances the delivery cursor when the push is handed to the socket. That overstates
   delivery for a push dropped by the backpressure timeout. The replay `ack` already says
-  exactly what the device received, so **open for the author**: advance the delivery
-  cursor on `ack{up_to_stream_id}` and drop the separate delivered receipt from §3.4.
+  exactly what the device received, so the proposal was to advance the delivery cursor
+  on `ack{up_to_stream_id}` and drop the separate delivered receipt from §3.4. **Closed
+  2026-11-02** the other way (ADR `2026-11-02-delivered-receipt-device-stored.md`): the
+  ack exists only in replay mode and stays the sync cursor (item 7), so an online
+  recipient receiving live pushes would produce no delivered signal at all. The §3.4
+  receipt is confirmed as `delivered{conversation_id, up_to_message_id}`, sent after the
+  local store write in both modes; the push-to-socket advance is withdrawn, which closes
+  B5 finding 10 by removal rather than by a patch.
 
 ### 7.4 §5.2 and §1.4: the debounce and the client's reconnect were sized independently
 
@@ -1213,9 +1247,7 @@ for the synchronous in-memory bus and clock needed a settle point and real sleep
 - N6 (A3 item 6b): membership checks at the history page API, the summary read and
   the socket's `msg` frame, and one sentence on transport encryption, or an explicit
   deferral of each. Store replica loss and N2 left this list on 2026-11-02 (§2.7).
-- Item 8, delivery cursor: whether the delivery cursor of §3.4 advances on the replay
-  `ack{up_to_stream_id}` in place of the delivered receipt (§7.3, B5 finding 10). To be
-  decided on that ack (ADR `2026-11-02-replay-mode-boundary.md`), not on
-  push-to-socket. Item 7 (end of replay) left this list on 2026-11-02 (§4.4).
+- Items 7 (end of replay) and 8 (delivery cursor) left this list on 2026-11-02
+  (§4.4, §3.4).
 - Presence debounce versus the client's reconnect: the relation the 5 s debounce, the
   15 s mirror rule and the first backoff must keep (§7.4).
