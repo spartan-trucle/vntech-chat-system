@@ -3,7 +3,7 @@
 Roadmap: `.planning/roadmap.md`. Only the hub edits this file; lanes report in the
 format of roadmap §6 and the hub copies the block here.
 
-Last updated: 2026-11-02, report round 34 (B10 verified on B e366893, 280 tests, 7/7 scenarios, handed to C; B11 running on B; ack cadence 100 frames / 500 ms to confirm; 4 A3 decisions open: 4, 5, 6b, 9, plus text item 12; 300 ms budgets await the author's confirmation)
+Last updated: 2026-11-02, report round 35, paused for the day (B10 merged ffcbf95, board 41ec99c; B11 verified on B 49317a2, to hand to C tomorrow; everything pushed; ack cadence 100 frames / 500 ms to confirm; 4 A3 decisions open: 4, 5, 6b, 9, plus text item 12; 300 ms budgets await the author's confirmation)
 
 ## Epics
 
@@ -12,7 +12,7 @@ Last updated: 2026-11-02, report round 34 (B10 verified on B e366893, 280 tests,
 | A1 tradeoffs.md | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ 181e74f | n/a | 30 entries, one per spec §5 bullet; open ones listed first | none |
 | A2 sequence diagrams | A | 0 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ e8aa5c9 | n/a | nine Mermaid diagrams, parse-checked; flows 2, 5, 9 end at an open note | none |
 | A4 rubric run | A | 1 | merged (ec786e5) | claude/a-design-closeout-d1e5bf @ a0b512e | n/a | 6 pass / 3 fail (Requirements, Trade-offs, Failure modes); N2 and N6 fail was not predicted | none |
-| A3 open decisions | hub + author | 2 | decisions 1, 2, 3, 6a, 7, 8, 10 and 11 decided (ADRs 6858647, b5f102d, 74ae209, this round); A3.3 text merged (8273ae9), A3.4 merged (3dea2d4), board updated (8d8324c); A3.5 merged (955decf), board updated (72f905e); A3.6 merged (03867c7), board updated (b1eb7e5); B10 done on B (e366893, 280 tests, 7/7 scenarios, Redis 38 pass + the known MAXLEN-floor expected failure), handed to C; B11 running on B; open: 4, 5, 6b, 9, text item 12; 300 ms budgets in §2.7 still marked to confirm | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
+| A3 open decisions | hub + author | 2 | decisions 1, 2, 3, 6a, 7, 8, 10 and 11 decided (ADRs 6858647, b5f102d, 74ae209, this round); A3.3 text merged (8273ae9), A3.4 merged (3dea2d4), board updated (8d8324c); A3.5 merged (955decf), board updated (72f905e); A3.6 merged (03867c7), board updated (b1eb7e5); B10 merged (ffcbf95, board 41ec99c); B11 verified on B (49317a2), to hand to C tomorrow; open: 4, 5, 6b, 9, text item 12; 300 ms budgets in §2.7 still marked to confirm | main | n/a | six decisions listed in docs/rubric.md (A branch) and below | author |
 | A5 followups.md | A | 5 (optional) | todo | | n/a | | |
 | B0 scaffold + protocol | B | 0 | merged (3820d58) | claude/b-prototype-297ab9 @ 59a2541..6ba272b | 77 passed + typecheck | eight ports (roadmap said five), per-module options on the server context | none |
 | B1 heartbeat + reconnect | B | 1 | merged (6a81830) | claude/b-prototype-297ab9 @ 8accc6e | 111 passed (lane), 95 alone | a blackholed client never sees the server's terminate: server death ~11 s and the client 15 s mirror rule are independent detections; S1 must assert both | none |
@@ -45,7 +45,8 @@ Last updated: 2026-11-02, report round 34 (B10 verified on B e366893, 280 tests,
 | A3.4 replay-to-live handoff and append order text | 3dea2d4 (board 8d8324c) | 2026-11-02 |
 | A3.5 end of replay as a mode boundary text | 955decf (board 72f905e) | 2026-11-02 |
 | A3.6 delivered receipt text | 03867c7 (board b1eb7e5) | 2026-11-02 |
-| B10 live-first replay, replay flag, replay_done, store-assigned stream ids, re-replay after a dropped push, scenario S7 | pending (B head 85037ff = e366893 + main, handed to C) | 2026-11-02 |
+| B10 live-first replay, replay flag, replay_done, store-assigned stream ids, re-replay after a dropped push, scenario S7 | ffcbf95 (board 41ec99c) | 2026-11-02 |
+| B11 delivered receipt from the device, push-to-socket advance removed, resend after replay_done | pending (B head 49317a2, 293 tests, 7/7 scenarios both modes; to hand to C tomorrow) | 2026-11-02 |
 
 ## Surprises collected for C2
 
